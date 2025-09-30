@@ -1,4 +1,4 @@
-// index.js — Bot PRO CAMPO con bienvenida, precios Khumic-100 y handoff humano bidireccional
+// index.js — Bot PRO CAMPO con bienvenida, precios Khumic-100 + imagen, y handoff humano bidireccional
 const express = require('express');
 const axios = require('axios');
 require('dotenv').config();
@@ -19,13 +19,25 @@ async function sendText(to, body) {
   return axios.post(url, payload, { headers });
 }
 
+async function sendImage(to, urlImage, caption = '') {
+  const url = `https://graph.facebook.com/v20.0/${WABA_ID}/messages`;
+  const payload = {
+    messaging_product: 'whatsapp',
+    to,
+    type: 'image',
+    image: { link: urlImage, caption }
+  };
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` };
+  return axios.post(url, payload, { headers });
+}
+
 function normalize(txt = '') {
   return txt.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '').trim();
 }
 
 // Estado simple en memoria
-const sessions = new Map(); // number -> {handoff:boolean, since:number, ticket:string}
-const pending = [];         // [{number, ticket, createdAt}]
+const sessions = new Map(); 
+const pending = [];         
 
 function setState(number, state) { sessions.set(number, { ...(sessions.get(number) || {}), ...state }); }
 function getState(number) { return sessions.get(number) || {}; }
@@ -37,8 +49,8 @@ function mainMenu() {
 `🤖🌱 ¡Hola! Soy *PRO CAMPO BOT* y estoy aquí para ayudarte en lo que necesites.
 Elige una opción escribiendo el número:
 
-1️⃣ Precios y promociones de *Khumic-100*
-2️⃣ Hablar con un asesor 👨‍💼
+1️⃣ Precios y promociones de *Khumic-100*  
+2️⃣ Hablar con un asesor 👨‍💼  
 0️⃣ Volver al inicio`
   );
 }
@@ -49,10 +61,10 @@ function productInfo() {
 ✨ El mejor aliado para tus cultivos.
 
 💲 *Precios y Promociones*:
-• 1 Kg → $13.96
-• 3 Kg → $34.92
-• 25 Kg → $226.98
-• 50 Kg → $436.50
+• 1 Kg → $13.96  
+• 3 Kg → $34.92  
+• 25 Kg → $226.98  
+• 50 Kg → $436.50  
 
 ¿Deseas aprovechar alguna promoción?
 Escribe *asesor* y te conecto con un humano.`
@@ -84,7 +96,7 @@ async function notifyAdmin(text) {
   await sendText(ADMIN_NUMBER, text);
 }
 
-// Comandos del admin (tú, desde tu número personal, al mismo chat del bot)
+// Comandos del admin
 async function handleAdminCommand(adminTextRaw) {
   const adminText = adminTextRaw.trim();
   const t = normalize(adminText);
@@ -179,7 +191,6 @@ app.post('/webhook', async (req, res) => {
         // Mensajes del CLIENTE
         const st = getState(from);
 
-        // Si está en handoff: reenvía TODO al admin y no responde el bot
         if (st.handoff) {
           await notifyAdmin(`👤 Cliente +${from} (#${st.ticket || 'S/T'}):\n"${text}"`);
           if (['menu','menú','inicio','hola','hi','start','0','volver'].includes(t)) {
@@ -193,6 +204,9 @@ app.post('/webhook', async (req, res) => {
         if (['hola','buenas','menu','menú','inicio','start','0'].includes(t)) {
           await sendText(from, mainMenu());
         } else if (t === '1' || /precio|promocion|promoción|khumic/.test(t)) {
+          // Primero enviar imagen
+          await sendImage(from, "https://tuservidor.com/khumic100.jpg", "Khumic-100 🌱");
+          // Luego enviar info de precios
           await sendText(from, productInfo());
         } else if (t === '2' || /asesor|humano|contacto|vendedor/.test(t)) {
           const tk = st.ticket || newTicket();
@@ -217,6 +231,5 @@ app.get('/', (_req, res) => res.send('WhatsApp bot activo'));
 
 const PORT = Number(process.env.PORT || 3000);
 app.listen(PORT, '0.0.0.0', () => console.log(`Servidor escuchando en puerto ${PORT}`));
-
 
 
