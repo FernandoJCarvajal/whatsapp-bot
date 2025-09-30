@@ -1,4 +1,4 @@
-// index.js — Bot PRO CAMPO con bienvenida, precios Khumic-100 + imagen, y handoff humano bidireccional
+// index.js — PRO CAMPO BOT con 2 productos (Khumic-100 y Khumic – Seaweed 800) + handoff humano bidireccional
 const express = require('express');
 const axios = require('axios');
 require('dotenv').config();
@@ -35,36 +35,53 @@ function normalize(txt = '') {
   return txt.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '').trim();
 }
 
-// Estado simple en memoria
-const sessions = new Map(); 
-const pending = [];         
+// ===== Estado simple en memoria =====
+const sessions = new Map(); // number -> {handoff:boolean, since:number, ticket:string}
+const pending = [];         // [{number, ticket, createdAt}]
 
 function setState(number, state) { sessions.set(number, { ...(sessions.get(number) || {}), ...state }); }
 function getState(number) { return sessions.get(number) || {}; }
 function newTicket() { return Math.random().toString(36).slice(2, 8).toUpperCase(); }
 
-// ===== Respuestas =====
+// ===== Textos =====
 function mainMenu() {
   return (
 `🤖🌱 ¡Hola! Soy *PRO CAMPO BOT* y estoy aquí para ayudarte en lo que necesites.
 Elige una opción escribiendo el número:
 
-1️⃣ Precios y promociones de *Khumic-100*  
-2️⃣ Hablar con un asesor 👨‍💼  
+1️⃣ Precios y promociones de *Khumic-100* (ácidos húmicos + fúlvicos)
+2️⃣ Precios y promociones de *Khumic – Seaweed 800* (algas marinas)
+3️⃣ Hablar con un asesor 👨‍💼
 0️⃣ Volver al inicio`
   );
 }
 
-function productInfo() {
+// Producto 1: Khumic-100 (ácidos húmicos + fúlvicos)
+function productInfoKhumic100() {
   return (
-`💚 *Khumic-100*
+`💚 *Khumic-100* (ácidos húmicos + fúlvicos)
 ✨ El mejor aliado para tus cultivos.
 
 💲 *Precios y Promociones*:
-• 1 Kg → $13.96  
-• 3 Kg → $34.92  
-• 25 Kg → $226.98  
-• 50 Kg → $436.50  
+• 1 Kg → $13.96
+• 3 Kg → $34.92
+• 25 Kg → $226.98
+• 50 Kg → $436.50
+
+¿Deseas aprovechar alguna promoción?
+Escribe *asesor* y te conecto con un humano.`
+  );
+}
+
+// Producto 2: Khumic – Seaweed 800 (algas marinas)
+function productInfoSeaweed() {
+  return (
+`🌊 *Khumic – Seaweed 800* (algas marinas)
+🌿 Bioestimulante para vigor, enraizamiento y resistencia.
+
+💲 *Precios y Promociones*:
+• 1 Kg → $16.00
+• 3 Kg → $39.68
 
 ¿Deseas aprovechar alguna promoción?
 Escribe *asesor* y te conecto con un humano.`
@@ -75,7 +92,7 @@ function thanksInfo() {
   return `✅ Listo, te conecto con un asesor humano. Por favor espera un momento.`;
 }
 
-// Notificaciones al admin
+// ===== Notificaciones al admin =====
 async function notifyAdminNew(from, text, ticket) {
   if (!ADMIN_NUMBER) return;
   const msg =
@@ -96,7 +113,7 @@ async function notifyAdmin(text) {
   await sendText(ADMIN_NUMBER, text);
 }
 
-// Comandos del admin
+// ===== Comandos del admin (tú) =====
 async function handleAdminCommand(adminTextRaw) {
   const adminText = adminTextRaw.trim();
   const t = normalize(adminText);
@@ -175,7 +192,7 @@ app.post('/webhook', async (req, res) => {
 
     if (Array.isArray(messages)) {
       for (const m of messages) {
-        if (m.type !== 'text') continue;
+        if (m.type !== 'text') continue; // (simple: manejamos texto)
 
         const from = m.from;
         const text = (m.text?.body || '').trim();
@@ -191,6 +208,7 @@ app.post('/webhook', async (req, res) => {
         // Mensajes del CLIENTE
         const st = getState(from);
 
+        // Si está en handoff: reenvía TODO al admin y no responde el bot
         if (st.handoff) {
           await notifyAdmin(`👤 Cliente +${from} (#${st.ticket || 'S/T'}):\n"${text}"`);
           if (['menu','menú','inicio','hola','hi','start','0','volver'].includes(t)) {
@@ -200,20 +218,31 @@ app.post('/webhook', async (req, res) => {
           continue;
         }
 
-        // Flujo del bot
+        // Flujo del bot (menú)
         if (['hola','buenas','menu','menú','inicio','start','0'].includes(t)) {
           await sendText(from, mainMenu());
-        } else if (t === '1' || /precio|promocion|promoción|khumic/.test(t)) {
-          // Primero enviar imagen
-          await sendImage(from, "https://tuservidor.com/khumic100.jpg", "Khumic-100 🌱");
-          // Luego enviar info de precios
-          await sendText(from, productInfo());
-        } else if (t === '2' || /asesor|humano|contacto|vendedor/.test(t)) {
+
+        // Opción 1: Khumic-100
+        } else if (t === '1' || /khumic-?100|humico|húmico|fulvico|fúlvico|precio khumic/.test(t)) {
+          // Imagen opcional (cambia el enlace por el tuyo público HTTPS)
+          const img1 = process.env.KHUMIC100_IMG || 'https://tuservidor.com/khumic100.jpg';
+          try { await sendImage(from, img1, 'Khumic-100 🌱 (ácidos húmicos + fúlvicos)'); } catch {}
+          await sendText(from, productInfoKhumic100());
+
+        // Opción 2: Seaweed 800
+        } else if (t === '2' || /seaweed|alga|algas|800|precio seaweed/.test(t)) {
+          const img2 = process.env.SEAWEED800_IMG || 'https://tuservidor.com/seaweed800.jpg';
+          try { await sendImage(from, img2, 'Khumic – Seaweed 800 🌊 (algas marinas)'); } catch {}
+          await sendText(from, productInfoSeaweed());
+
+        // Opción 3: Asesor humano
+        } else if (t === '3' || /asesor|humano|contacto|vendedor/.test(t)) {
           const tk = st.ticket || newTicket();
           setState(from, { handoff: true, since: Date.now(), ticket: tk });
           pending.push({ number: from, ticket: tk, createdAt: Date.now() });
           await sendText(from, thanksInfo());
           await notifyAdminNew(from, text, tk);
+
         } else {
           await sendText(from, `No entendí tu mensaje 🤔.\n${mainMenu()}`);
         }
@@ -227,9 +256,9 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
+// Salud
 app.get('/', (_req, res) => res.send('WhatsApp bot activo'));
 
+// Puerto (local/Render)
 const PORT = Number(process.env.PORT || 3000);
 app.listen(PORT, '0.0.0.0', () => console.log(`Servidor escuchando en puerto ${PORT}`));
-
-
