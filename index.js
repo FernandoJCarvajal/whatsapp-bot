@@ -1,4 +1,4 @@
-// index.js — Handoff humano bidireccional (reenviar mensajes del cliente al admin)
+// index.js — Bot PRO CAMPO con bienvenida, precios Khumic-100 y handoff humano bidireccional
 const express = require('express');
 const axios = require('axios');
 require('dotenv').config();
@@ -23,6 +23,7 @@ function normalize(txt = '') {
   return txt.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '').trim();
 }
 
+// Estado simple en memoria
 const sessions = new Map(); // number -> {handoff:boolean, since:number, ticket:string}
 const pending = [];         // [{number, ticket, createdAt}]
 
@@ -30,58 +31,60 @@ function setState(number, state) { sessions.set(number, { ...(sessions.get(numbe
 function getState(number) { return sessions.get(number) || {}; }
 function newTicket() { return Math.random().toString(36).slice(2, 8).toUpperCase(); }
 
-// ----- Respuestas básicas -----
+// ===== Respuestas =====
 function mainMenu() {
-  const name = process.env.BUSINESS_NAME || process.env.BOT_NAME || 'Nuestra empresa';
-  const prod = process.env.PRODUCT_NAME || 'nuestro producto';
-  return `¡Bienvenido a ${name}! 👋
-Elige una opción:
-1️⃣ Información de ${prod}
-2️⃣ Promociones
-3️⃣ Hablar con un asesor
+  return (
+`🤖🌱 ¡Hola! Soy *PRO CAMPO BOT* y estoy aquí para ayudarte en lo que necesites.
+Elige una opción escribiendo el número:
 
-También puedes escribir: precio, promo, horario, ubicacion, catalogo.`;
+1️⃣ Precios y promociones de *Khumic-100*
+2️⃣ Hablar con un asesor 👨‍💼
+0️⃣ Volver al inicio`
+  );
 }
+
 function productInfo() {
-  const prod = process.env.PRODUCT_NAME || 'nuestro producto';
-  const price = process.env.PRODUCT_PRICE ? `USD ${process.env.PRODUCT_PRICE}` : 'Consulta precio';
-  return `ℹ️ ${prod}
-• Beneficios: mejora rendimiento y salud del cultivo 🌱
-• Presentación: 1 L
-• Precio: ${price}
+  return (
+`💚 *Khumic-100*
+✨ El mejor aliado para tus cultivos.
 
-¿Deseas comprar o hablar con un asesor? Responde: "asesor" o "comprar".`;
-}
-function promosInfo() {
-  return `🎁 Promociones
-• 2x1 en tu primera compra esta semana.
-• Envío gratis desde 3 unidades.
-¿Te contacto con un asesor? Escribe "asesor".`;
-}
-function hoursInfo() { return `🕒 Horarios: ${process.env.HOURS || 'Lun–Sáb 9:00–18:00'}`; }
-function locationInfo() { return `📍 Atendemos en ${process.env.CITY || 'nuestra ciudad'}. Envíos a nivel nacional.`; }
-function thanksInfo() { return `✅ Listo, te conecto con un asesor humano. Por favor espera un momento.`; }
+💲 *Precios y Promociones*:
+• 1 Kg → $13.96
+• 3 Kg → $34.92
+• 25 Kg → $226.98
+• 50 Kg → $436.50
 
-// ----- Notificaciones admin -----
+¿Deseas aprovechar alguna promoción?
+Escribe *asesor* y te conecto con un humano.`
+  );
+}
+
+function thanksInfo() {
+  return `✅ Listo, te conecto con un asesor humano. Por favor espera un momento.`;
+}
+
+// Notificaciones al admin
 async function notifyAdminNew(from, text, ticket) {
   if (!ADMIN_NUMBER) return;
-  const msg = `⚠️ Nueva solicitud de ASESOR
+  const msg =
+`⚠️ Nueva solicitud de ASESOR
 Ticket: #${ticket}
 Cliente: +${from}
 Mensaje: "${text}"
 
 Responde con:
-• R <mensaje>          (responde al ticket más reciente)
-• R #${ticket} <mensaje>  (responde a este ticket)
+• R <mensaje>
+• R #${ticket} <mensaje>
 • LIST | END #${ticket}`;
   await sendText(ADMIN_NUMBER, msg);
 }
+
 async function notifyAdmin(text) {
   if (!ADMIN_NUMBER) return;
   await sendText(ADMIN_NUMBER, text);
 }
 
-// ----- Comandos admin -----
+// Comandos del admin (tú, desde tu número personal, al mismo chat del bot)
 async function handleAdminCommand(adminTextRaw) {
   const adminText = adminTextRaw.trim();
   const t = normalize(adminText);
@@ -91,16 +94,18 @@ async function handleAdminCommand(adminTextRaw) {
     const lines = pending.map(p => `• #${p.ticket} +${p.number}`);
     return `Pendientes:\n${lines.join('\n')}`;
   }
+
   if (/^end\s+#/i.test(adminText)) {
     const id = adminText.match(/^end\s+#([a-z0-9]+)/i)?.[1]?.toUpperCase();
     if (!id) return 'Formato: END #TICKET';
     const idx = pending.findIndex(x => x.ticket === id);
     if (idx >= 0) pending.splice(idx, 1);
     for (const [num, st] of sessions.entries()) {
-      if (st.ticket === id) { setState(num, { handoff: false }); }
+      if (st.ticket === id) setState(num, { handoff: false });
     }
     return `✓ Ticket #${id} cerrado. Bot reactivado.`;
   }
+
   if (/^r\s+#/i.test(adminText)) {
     const m = adminText.match(/^r\s+#([a-z0-9]+)\s+([\s\S]+)/i);
     if (!m) return 'Formato: R #TICKET <mensaje>';
@@ -112,6 +117,7 @@ async function handleAdminCommand(adminTextRaw) {
     await sendText(target, reply);
     return `→ Enviado a +${target} (ticket #${id}).`;
   }
+
   if (/^r\s+/i.test(adminText)) {
     const reply = adminText.replace(/^r\s+/i, '').trim();
     let target = pending.length ? pending[pending.length - 1].number : null;
@@ -126,6 +132,7 @@ async function handleAdminCommand(adminTextRaw) {
     await sendText(target, reply);
     return `→ Enviado a +${target}.`;
   }
+
   if (t === 'help' || t === 'ayuda') {
     return `Comandos:
 • LIST
@@ -133,10 +140,11 @@ async function handleAdminCommand(adminTextRaw) {
 • R #TICKET <mensaje>
 • END #TICKET`;
   }
+
   return `No entendí el comando. Escribe HELP.`;
 }
 
-// ====== Webhook Verify (GET) ======
+// ===== Webhook Verify (GET) =====
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
@@ -145,7 +153,7 @@ app.get('/webhook', (req, res) => {
   return res.sendStatus(403);
 });
 
-// ====== Webhook Messages (POST) ======
+// ===== Webhook Messages (POST) =====
 app.post('/webhook', async (req, res) => {
   try {
     const entry = req.body.entry?.[0];
@@ -157,25 +165,23 @@ app.post('/webhook', async (req, res) => {
       for (const m of messages) {
         if (m.type !== 'text') continue;
 
-        const from = m.from;                  // número de quien envía
+        const from = m.from;
         const text = (m.text?.body || '').trim();
         const t = normalize(text);
 
-        // 1) Mensajes del ADMIN (tú)
+        // Mensajes del ADMIN
         if (ADMIN_NUMBER && from === ADMIN_NUMBER) {
           const out = await handleAdminCommand(text);
           if (out) await sendText(ADMIN_NUMBER, out);
           continue;
         }
 
-        // 2) Mensajes del CLIENTE
+        // Mensajes del CLIENTE
         const st = getState(from);
 
-        // Si está en handoff: reenviar TODO lo que escribe el cliente al admin
+        // Si está en handoff: reenvía TODO al admin y no responde el bot
         if (st.handoff) {
-          // reenvía al admin cada mensaje del cliente
           await notifyAdmin(`👤 Cliente +${from} (#${st.ticket || 'S/T'}):\n"${text}"`);
-          // el bot no responde al cliente en este modo, salvo si pide salir al menú
           if (['menu','menú','inicio','hola','hi','start','0','volver'].includes(t)) {
             setState(from, { handoff: false });
             await sendText(from, mainMenu());
@@ -183,30 +189,16 @@ app.post('/webhook', async (req, res) => {
           continue;
         }
 
-        // Bot normal
+        // Flujo del bot
         if (['hola','buenas','menu','menú','inicio','start','0'].includes(t)) {
           await sendText(from, mainMenu());
-        } else if (t === '1' || /producto|khumic|info|informacion|información/.test(t)) {
+        } else if (t === '1' || /precio|promocion|promoción|khumic/.test(t)) {
           await sendText(from, productInfo());
-        } else if (t === '2' || /promo|promocion|promoción|oferta/.test(t)) {
-          await sendText(from, promosInfo());
-        } else if (t === '3' || /asesor|humano|contacto|vendedor|whatsapp/.test(t)) {
+        } else if (t === '2' || /asesor|humano|contacto|vendedor/.test(t)) {
           const tk = st.ticket || newTicket();
           setState(from, { handoff: true, since: Date.now(), ticket: tk });
           pending.push({ number: from, ticket: tk, createdAt: Date.now() });
           await sendText(from, thanksInfo());
-          await notifyAdminNew(from, text, tk);
-        } else if (/precio|costo|vale|cuanto/.test(t)) {
-          await sendText(from, productInfo());
-        } else if (/horario|hora|abren|cierran/.test(t)) {
-          await sendText(from, hoursInfo());
-        } else if (/ubicacion|ubicación|direccion|dirección|donde/.test(t)) {
-          await sendText(from, locationInfo());
-        } else if (/comprar|pedido|orden|pagar/.test(t)) {
-          const tk = newTicket();
-          setState(from, { handoff: true, since: Date.now(), ticket: tk });
-          pending.push({ number: from, ticket: tk, createdAt: Date.now() });
-          await sendText(from, '🛒 ¡Genial! Te conecto con un asesor para completar tu pedido.');
           await notifyAdminNew(from, text, tk);
         } else {
           await sendText(from, `No entendí tu mensaje 🤔.\n${mainMenu()}`);
