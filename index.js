@@ -1,4 +1,4 @@
-// index.js — PRO CAMPO BOT con 2 productos (Khumic-100 y Khumic – Seaweed 800) + handoff humano bidireccional
+// index.js — PRO CAMPO BOT con precios + beneficios (Khumic-100 y Seaweed 800) y handoff humano bidireccional
 const express = require('express');
 const axios = require('axios');
 require('dotenv').config();
@@ -21,12 +21,7 @@ async function sendText(to, body) {
 
 async function sendImage(to, urlImage, caption = '') {
   const url = `https://graph.facebook.com/v20.0/${WABA_ID}/messages`;
-  const payload = {
-    messaging_product: 'whatsapp',
-    to,
-    type: 'image',
-    image: { link: urlImage, caption }
-  };
+  const payload = { messaging_product: 'whatsapp', to, type: 'image', image: { link: urlImage, caption } };
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` };
   return axios.post(url, payload, { headers });
 }
@@ -52,11 +47,13 @@ Elige una opción escribiendo el número:
 1️⃣ Precios y promociones de *Khumic-100* (ácidos húmicos + fúlvicos)
 2️⃣ Precios y promociones de *Khumic – Seaweed 800* (algas marinas)
 3️⃣ Hablar con un asesor 👨‍💼
+4️⃣ Beneficios de *Khumic-100* (ácidos húmicos + fúlvicos)
+5️⃣ Beneficios de *Khumic – Seaweed 800* (algas marinas)
 0️⃣ Volver al inicio`
   );
 }
 
-// Producto 1: Khumic-100 (ácidos húmicos + fúlvicos)
+// Producto 1: Khumic-100 (ácidos húmicos + fúlvicos) — PRECIOS
 function productInfoKhumic100() {
   return (
 `💚 *Khumic-100* (ácidos húmicos + fúlvicos)
@@ -73,7 +70,7 @@ Escribe *asesor* y te conecto con un humano.`
   );
 }
 
-// Producto 2: Khumic – Seaweed 800 (algas marinas)
+// Producto 2: Seaweed 800 — PRECIOS
 function productInfoSeaweed() {
   return (
 `🌊 *Khumic – Seaweed 800* (algas marinas)
@@ -85,6 +82,46 @@ function productInfoSeaweed() {
 
 ¿Deseas aprovechar alguna promoción?
 Escribe *asesor* y te conecto con un humano.`
+  );
+}
+
+// Beneficios: Khumic-100 (ácidos húmicos + fúlvicos)
+function benefitsKhumic100() {
+  return (
+`🌱 *Descubre los beneficios de los ácidos húmicos y fúlvicos Khumic-100* 🌿
+
+*Beneficios para las plantas:*
+1. Mejora la absorción de nutrientes 💪: ayudan a absorber mejor los nutrientes del suelo.
+2. Estimula el crecimiento y desarrollo 🌱: incrementa vigor y resistencia a enfermedades y plagas.
+3. Mejora la tolerancia a la sequía ☀️: reduce la pérdida de agua y mantiene la humedad.
+4. Aumenta la producción de frutos y flores 🌼: mejora rendimiento, calidad y sabor.
+5. Mejora la resistencia a enfermedades 🌿: disminuye la necesidad de pesticidas químicos.
+
+*Beneficios para el suelo:*
+1. Mejora la estructura del suelo 🌿: aumenta retención de agua y nutrientes.
+2. Aumenta la biodiversidad 🌸: promueve la salud y el equilibrio del ecosistema.
+3. Reduce la contaminación del suelo 🚮: mejora calidad de agua y aire.
+
+*Beneficios para el medio ambiente:*
+1. Reduce la necesidad de fertilizantes químicos 🌿.
+2. Mejora la calidad del agua 🌊.
+3. Reduce la emisión de GEI 🌟: contribuye a mitigar el cambio climático.`
+  );
+}
+
+// Beneficios: Seaweed 800 (algas marinas)
+function benefitsSeaweed800() {
+  return (
+`🌿🌊 *Beneficios de Khumic – Seaweed 800 (algas marinas)* 🌊🌿
+
+✨ Mejora la estructura del suelo: favorece retención de agua y nutrientes.
+✨ Estimula el crecimiento: rico en micro y macronutrientes.
+✨ Incrementa la resistencia a enfermedades: compuestos naturales que ayudan a prevenir y controlar.
+✨ Mejora la calidad de la fruta: mayor contenido de nutrientes y antioxidantes.
+✨ Reduce el estrés abiótico: ayuda frente a sequía y calor.
+✨ Fertilizante natural: fuente orgánica que no contamina suelo ni agua.
+
+¡Incorpora las algas marinas en tus cultivos y descubre los beneficios! 🌟`
   );
 }
 
@@ -107,11 +144,7 @@ Responde con:
 • LIST | END #${ticket}`;
   await sendText(ADMIN_NUMBER, msg);
 }
-
-async function notifyAdmin(text) {
-  if (!ADMIN_NUMBER) return;
-  await sendText(ADMIN_NUMBER, text);
-}
+async function notifyAdmin(text) { if (ADMIN_NUMBER) await sendText(ADMIN_NUMBER, text); }
 
 // ===== Comandos del admin (tú) =====
 async function handleAdminCommand(adminTextRaw) {
@@ -123,18 +156,14 @@ async function handleAdminCommand(adminTextRaw) {
     const lines = pending.map(p => `• #${p.ticket} +${p.number}`);
     return `Pendientes:\n${lines.join('\n')}`;
   }
-
   if (/^end\s+#/i.test(adminText)) {
     const id = adminText.match(/^end\s+#([a-z0-9]+)/i)?.[1]?.toUpperCase();
     if (!id) return 'Formato: END #TICKET';
     const idx = pending.findIndex(x => x.ticket === id);
     if (idx >= 0) pending.splice(idx, 1);
-    for (const [num, st] of sessions.entries()) {
-      if (st.ticket === id) setState(num, { handoff: false });
-    }
+    for (const [num, st] of sessions.entries()) if (st.ticket === id) setState(num, { handoff: false });
     return `✓ Ticket #${id} cerrado. Bot reactivado.`;
   }
-
   if (/^r\s+#/i.test(adminText)) {
     const m = adminText.match(/^r\s+#([a-z0-9]+)\s+([\s\S]+)/i);
     if (!m) return 'Formato: R #TICKET <mensaje>';
@@ -146,7 +175,6 @@ async function handleAdminCommand(adminTextRaw) {
     await sendText(target, reply);
     return `→ Enviado a +${target} (ticket #${id}).`;
   }
-
   if (/^r\s+/i.test(adminText)) {
     const reply = adminText.replace(/^r\s+/i, '').trim();
     let target = pending.length ? pending[pending.length - 1].number : null;
@@ -161,7 +189,6 @@ async function handleAdminCommand(adminTextRaw) {
     await sendText(target, reply);
     return `→ Enviado a +${target}.`;
   }
-
   if (t === 'help' || t === 'ayuda') {
     return `Comandos:
 • LIST
@@ -169,7 +196,6 @@ async function handleAdminCommand(adminTextRaw) {
 • R #TICKET <mensaje>
 • END #TICKET`;
   }
-
   return `No entendí el comando. Escribe HELP.`;
 }
 
@@ -192,11 +218,12 @@ app.post('/webhook', async (req, res) => {
 
     if (Array.isArray(messages)) {
       for (const m of messages) {
-        if (m.type !== 'text') continue; // (simple: manejamos texto)
+        if (m.type !== 'text') continue; // manejamos texto (puedes extender a media)
 
         const from = m.from;
         const text = (m.text?.body || '').trim();
         const t = normalize(text);
+        const st = getState(from);
 
         // Mensajes del ADMIN
         if (ADMIN_NUMBER && from === ADMIN_NUMBER) {
@@ -204,9 +231,6 @@ app.post('/webhook', async (req, res) => {
           if (out) await sendText(ADMIN_NUMBER, out);
           continue;
         }
-
-        // Mensajes del CLIENTE
-        const st = getState(from);
 
         // Si está en handoff: reenvía TODO al admin y no responde el bot
         if (st.handoff) {
@@ -218,30 +242,37 @@ app.post('/webhook', async (req, res) => {
           continue;
         }
 
-        // Flujo del bot (menú)
+        // Flujo bot (menú y keywords)
         if (['hola','buenas','menu','menú','inicio','start','0'].includes(t)) {
           await sendText(from, mainMenu());
 
-        // Opción 1: Khumic-100
+        // 1) Precios Khumic-100
         } else if (t === '1' || /khumic-?100|humico|húmico|fulvico|fúlvico|precio khumic/.test(t)) {
-          // Imagen opcional (cambia el enlace por el tuyo público HTTPS)
-          const img1 = process.env.KHUMIC100_IMG || 'https://tuservidor.com/khumic100.jpg';
-          try { await sendImage(from, img1, 'Khumic-100 🌱 (ácidos húmicos + fúlvicos)'); } catch {}
+          const img1 = process.env.KHUMIC100_IMG || ''; // opcional
+          if (img1) { try { await sendImage(from, img1, 'Khumic-100 🌱 (ácidos húmicos + fúlvicos)'); } catch {} }
           await sendText(from, productInfoKhumic100());
 
-        // Opción 2: Seaweed 800
+        // 2) Precios Seaweed 800
         } else if (t === '2' || /seaweed|alga|algas|800|precio seaweed/.test(t)) {
-          const img2 = process.env.SEAWEED800_IMG || 'https://tuservidor.com/seaweed800.jpg';
-          try { await sendImage(from, img2, 'Khumic – Seaweed 800 🌊 (algas marinas)'); } catch {}
+          const img2 = process.env.SEAWEED800_IMG || ''; // opcional
+          if (img2) { try { await sendImage(from, img2, 'Khumic – Seaweed 800 🌊 (algas marinas)'); } catch {} }
           await sendText(from, productInfoSeaweed());
 
-        // Opción 3: Asesor humano
+        // 3) Asesor humano
         } else if (t === '3' || /asesor|humano|contacto|vendedor/.test(t)) {
           const tk = st.ticket || newTicket();
           setState(from, { handoff: true, since: Date.now(), ticket: tk });
           pending.push({ number: from, ticket: tk, createdAt: Date.now() });
           await sendText(from, thanksInfo());
           await notifyAdminNew(from, text, tk);
+
+        // 4) Beneficios Khumic-100
+        } else if (t === '4' || /beneficio.+khumic-?100|beneficios humicos|beneficios húmicos|beneficios fulvicos|beneficios fúlvicos/.test(t)) {
+          await sendText(from, benefitsKhumic100());
+
+        // 5) Beneficios Seaweed 800
+        } else if (t === '5' || /beneficio.+seaweed|beneficios algas|beneficios alga/.test(t)) {
+          await sendText(from, benefitsSeaweed800());
 
         } else {
           await sendText(from, `No entendí tu mensaje 🤔.\n${mainMenu()}`);
