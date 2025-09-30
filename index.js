@@ -1,4 +1,4 @@
-// index.js — PRO CAMPO BOT (menú 7 opciones, horario, imágenes, PDFs y handoff)
+// index.js — PRO CAMPO BOT (menú reordenado: asesor = opción 7)
 const express = require('express');
 const axios = require('axios');
 require('dotenv').config();
@@ -14,7 +14,6 @@ const ADMIN_NUMBER = process.env.ADMIN_NUMBER; // E.164 sin + (ej.: 593980499767
 const CITY = process.env.CITY || 'Ibarra';
 
 // ===== Config opcional (imágenes y PDFs) =====
-// Si no pones variables en environment, usamos por defecto tus enlaces de Drive:
 const KHUMIC100_IMG  = process.env.KHUMIC100_IMG  || 'https://drive.google.com/uc?export=view&id=1Ku4ghoo2F4Ek7phymx1IOAGb8jXyLngn';
 const SEAWEED800_IMG = process.env.SEAWEED800_IMG || 'https://drive.google.com/uc?export=view&id=11TceWyjbPAC7kZQVVs9tzgIxPuWW4tQa';
 const KHUMIC100_PDF  = process.env.KHUMIC100_PDF  || 'https://drive.google.com/uc?export=download&id=1Tyn6ElcglBBE8Skd_G5wHb0U4XDF9Jfu';
@@ -58,16 +57,11 @@ function businessHoursText() {
 }
 function isBusinessHours() {
   const now = new Date();
-  // a minutos UTC y convertimos a UTC-5 (Ecuador)
   const utcMins = now.getUTCHours() * 60 + now.getUTCMinutes();
-  const localMins = (utcMins - 5 * 60 + 24 * 60) % (24 * 60);
+  const localMins = (utcMins - 5 * 60 + 24 * 60) % (24 * 60); // UTC-5 Ecuador
   const day = now.getUTCDay(); // 0=Dom,1=Lun,...,6=Sab
-
-  // Lunes–Viernes 08:00–17:30
-  if (day >= 1 && day <= 5) return localMins >= 8*60 && localMins <= 17*60 + 30;
-  // Sábado 08:00–13:00
-  if (day === 6) return localMins >= 8*60 && localMins <= 13*60;
-  // Domingo cerrado
+  if (day >= 1 && day <= 5) return localMins >= 8 * 60 && localMins <= 17 * 60 + 30;
+  if (day === 6) return localMins >= 8 * 60 && localMins <= 13 * 60;
   return false;
 }
 
@@ -79,15 +73,16 @@ Elige una opción escribiendo el número:
 
 1️⃣ Precios y promociones de *Khumic-100* (ácidos húmicos + fúlvicos)
 2️⃣ Precios y promociones de *Khumic – Seaweed 800* (algas marinas)
-3️⃣ Hablar con un asesor 👨‍💼
-4️⃣ Beneficios de *Khumic-100* (ácidos húmicos + fúlvicos)
-5️⃣ Beneficios de *Khumic – Seaweed 800* (algas marinas)
-6️⃣ 📍 Envíos y cómo encontrarnos
-7️⃣ 📄 Fichas técnicas (PDF)
+3️⃣ Beneficios de *Khumic-100* (ácidos húmicos + fúlvicos)
+4️⃣ Beneficios de *Khumic – Seaweed 800* (algas marinas)
+5️⃣ 📍 Envíos y cómo encontrarnos
+6️⃣ 📄 Fichas técnicas (PDF)
+7️⃣ Hablar con un asesor 👨‍💼
 0️⃣ Volver al inicio`
   );
 }
 
+// Producto 1: Khumic-100 — PRECIOS
 function productInfoKhumic100() {
   return (
 `💚 *Khumic-100* (ácidos húmicos + fúlvicos)
@@ -104,6 +99,7 @@ function productInfoKhumic100() {
 📦 *Envío GRATIS* en *todas las promociones (más de 1 Kg)* mediante *Cita Express*.`
   );
 }
+// Producto 2: Seaweed 800 — PRECIOS
 function productInfoSeaweed() {
   return (
 `🌊 *Khumic – Seaweed 800* (algas marinas)
@@ -119,12 +115,13 @@ function productInfoSeaweed() {
   );
 }
 
+// Beneficios
 function benefitsKhumic100() {
   return (
 `🌱 *Beneficios de Khumic-100 (ácidos húmicos + fúlvicos)* 🌿
-*Plantas*: mejor absorción de nutrientes 💪, más crecimiento 🌱, tolerancia a sequía ☀️, más frutos y flores 🌼, mayor resistencia 🌿.
+*Plantas*: mejor absorción 💪, más crecimiento 🌱, tolerancia a sequía ☀️, más frutos y flores 🌼, mayor resistencia 🌿.
 *Suelo*: mejor estructura 🌿, más biodiversidad 🌸, menos contaminación 🚮.
-*Ambiente*: menos fertilizantes químicos 🌿, mejor calidad del agua 🌊, menos GEI 🌟.`
+*Ambiente*: menos fertilizantes 🌿, mejor agua 🌊, menos GEI 🌟.`
   );
 }
 function benefitsSeaweed800() {
@@ -134,6 +131,7 @@ Mejora estructura del suelo, estimula crecimiento, aumenta resistencia a enferme
   );
 }
 
+// Envíos y cómo encontrarnos
 function contactInfo() {
   return (
 `📍 *Envíos y cómo encontrarnos*
@@ -146,10 +144,11 @@ function contactInfo() {
 • *GRATIS* en *todas las promociones (más de 1 Kg)* con *Cita Express* (cobertura nacional).
 
 ¿Deseas coordinar despacho o compra mayorista?
-Escribe *asesor* y te conecto con un humano.`
+Escribe *7* para hablar con un asesor.`
   );
 }
 
+// Mensajes de handoff
 function thanksInfoNow() { return '✅ Te conecto con un asesor ahora mismo. Por favor espera un momento.'; }
 function thanksInfoLater() {
   return `${businessHoursText()}
@@ -246,7 +245,7 @@ app.post('/webhook', async (req, res) => {
 
     if (Array.isArray(messages)) {
       for (const m of messages) {
-        if (m.type !== 'text') continue;
+        if (m.type !== 'text') continue; // (puedes ampliar a media)
 
         const from = m.from;
         const text = (m.text?.body || '').trim();
@@ -274,15 +273,44 @@ app.post('/webhook', async (req, res) => {
         if (['hola','buenas','menu','menú','inicio','start','0'].includes(t)) {
           await sendText(from, mainMenu());
 
+        // 1) Precios Khumic-100
         } else if (t === '1' || /khumic-?100|humico|húmico|fulvico|fúlvico|precio khumic/.test(t)) {
           if (KHUMIC100_IMG) { try { await sendImage(from, KHUMIC100_IMG, 'Khumic-100 🌱 (ácidos húmicos + fúlvicos)'); } catch {} }
           await sendText(from, productInfoKhumic100());
 
+        // 2) Precios Seaweed 800
         } else if (t === '2' || /seaweed|alga|algas|800|precio seaweed/.test(t)) {
           if (SEAWEED800_IMG) { try { await sendImage(from, SEAWEED800_IMG, 'Khumic – Seaweed 800 🌊 (algas marinas)'); } catch {} }
           await sendText(from, productInfoSeaweed());
 
-        } else if (t === '3' || /asesor|humano|contacto|vendedor/.test(t)) {
+        // 3) Beneficios Khumic-100
+        } else if (t === '3' || /beneficio.+khumic-?100|beneficios humicos|beneficios húmicos|beneficios fulvicos|beneficios fúlvicos/.test(t)) {
+          await sendText(from, benefitsKhumic100());
+
+        // 4) Beneficios Seaweed 800
+        } else if (t === '4' || /beneficio.+seaweed|beneficios algas|beneficios alga/.test(t)) {
+          await sendText(from, benefitsSeaweed800());
+
+        // 5) Envíos y cómo encontrarnos
+        } else if (t === '5' || /direccion|dirección|ubicacion|ubicación|como llegar|envio|envío|envios|envíos|cita express/.test(t)) {
+          await sendText(from, contactInfo());
+
+        // 6) Fichas técnicas (PDF)
+        } else if (t === '6' || /ficha|pdf|ficha tecnica|ficha técnica/.test(t)) {
+          await sendText(from, '📄 *Fichas técnicas disponibles*\nEscribe:\n• *ficha 100* → Khumic-100\n• *ficha seaweed* → Seaweed 800');
+
+        // Ficha específica Khumic-100
+        } else if (/^ficha\s*100$/.test(t) || /pdf\s*100/.test(t) || /ficha khumic/.test(t)) {
+          if (KHUMIC100_PDF) await sendDocument(from, KHUMIC100_PDF, 'Khumic-100_Ficha_Tecnica.pdf', 'Ficha técnica Khumic-100');
+          else await sendText(from, 'No tengo el PDF de Khumic-100 configurado. Pide *asesor*.');
+
+        // Ficha específica Seaweed 800
+        } else if (/^ficha\s*seaweed$/.test(t) || /pdf\s*seaweed/.test(t) || /ficha 800/.test(t)) {
+          if (SEAWEED800_PDF) await sendDocument(from, SEAWEED800_PDF, 'Seaweed_800_Ficha_Tecnica.pdf', 'Ficha técnica Khumic – Seaweed 800');
+          else await sendText(from, 'No tengo el PDF de Seaweed 800 configurado. Pide *asesor*.');
+
+        // 7) Hablar con un asesor (con horario)
+        } else if (t === '7' || /asesor|humano|contacto|vendedor/.test(t)) {
           const tk = st.ticket || newTicket();
           setState(from, { handoff: true, since: Date.now(), ticket: tk });
           pending.push({ number: from, ticket: tk, createdAt: Date.now() });
@@ -292,29 +320,9 @@ app.post('/webhook', async (req, res) => {
             await notifyAdminNew(from, text, tk);
           } else {
             await sendText(from, thanksInfoLater());
-            // Si quieres avisarte siempre aunque sea fuera de horario, descomenta:
+            // Si quieres que igual te llegue aviso fuera de horario, descomenta:
             // await notifyAdminNew(from, text, tk);
           }
-
-        } else if (t === '4' || /beneficio.+khumic-?100|beneficios humicos|beneficios húmicos|beneficios fulvicos|beneficios fúlvicos/.test(t)) {
-          await sendText(from, benefitsKhumic100());
-
-        } else if (t === '5' || /beneficio.+seaweed|beneficios algas|beneficios alga/.test(t)) {
-          await sendText(from, benefitsSeaweed800());
-
-        } else if (t === '6' || /direccion|dirección|ubicacion|ubicación|como llegar|envio|envío|envios|envíos|cita express/.test(t)) {
-          await sendText(from, contactInfo());
-
-        } else if (t === '7' || /ficha|pdf|ficha tecnica|ficha técnica/.test(t)) {
-          await sendText(from, '📄 *Fichas técnicas disponibles*\nEscribe:\n• *ficha 100* → Khumic-100\n• *ficha seaweed* → Seaweed 800');
-
-        } else if (/^ficha\s*100$/.test(t) || /pdf\s*100/.test(t) || /ficha khumic/.test(t)) {
-          if (KHUMIC100_PDF) await sendDocument(from, KHUMIC100_PDF, 'Khumic-100_Ficha_Tecnica.pdf', 'Ficha técnica Khumic-100');
-          else await sendText(from, 'No tengo el PDF de Khumic-100 configurado. Pide *asesor*.');
-
-        } else if (/^ficha\s*seaweed$/.test(t) || /pdf\s*seaweed/.test(t) || /ficha 800/.test(t)) {
-          if (SEAWEED800_PDF) await sendDocument(from, SEAWEED800_PDF, 'Seaweed_800_Ficha_Tecnica.pdf', 'Ficha técnica Khumic – Seaweed 800');
-          else await sendText(from, 'No tengo el PDF de Seaweed 800 configurado. Pide *asesor*.');
 
         } else {
           await sendText(from, `No entendí tu mensaje 🤔.\n${mainMenu()}`);
@@ -335,3 +343,4 @@ app.get('/', (_req, res) => res.send('WhatsApp bot activo'));
 // Puerto
 const PORT = Number(process.env.PORT || 3000);
 app.listen(PORT, '0.0.0.0', () => console.log(`Servidor escuchando en puerto ${PORT}`));
+
