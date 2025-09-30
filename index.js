@@ -1,4 +1,4 @@
-// index.js — PRO CAMPO BOT con precios + beneficios (Khumic-100 y Seaweed 800) y handoff humano bidireccional
+// index.js — PRO CAMPO BOT con precios, beneficios, contacto/envíos y handoff humano bidireccional
 const express = require('express');
 const axios = require('axios');
 require('dotenv').config();
@@ -49,6 +49,7 @@ Elige una opción escribiendo el número:
 3️⃣ Hablar con un asesor 👨‍💼
 4️⃣ Beneficios de *Khumic-100* (ácidos húmicos + fúlvicos)
 5️⃣ Beneficios de *Khumic – Seaweed 800* (algas marinas)
+6️⃣ 📍 Envíos y cómo encontrarnos
 0️⃣ Volver al inicio`
   );
 }
@@ -61,9 +62,11 @@ function productInfoKhumic100() {
 
 💲 *Precios y Promociones*:
 • 1 Kg → $13.96
-• 3 Kg → $34.92
-• 25 Kg → $226.98
-• 50 Kg → $436.50
+• 3 Kg → $34.92  ✅ *Envío GRATIS (Cita Express)*
+• 25 Kg → $226.98 ✅ *Envío GRATIS (Cita Express)*
+• 50 Kg → $436.50 ✅ *Envío GRATIS (Cita Express)*
+
+📦 *Nota*: El envío es gratuito en *todas las promociones (más de 1 Kg)* mediante nuestro aliado *Cita Express*.
 
 ¿Deseas aprovechar alguna promoción?
 Escribe *asesor* y te conecto con un humano.`
@@ -78,7 +81,9 @@ function productInfoSeaweed() {
 
 💲 *Precios y Promociones*:
 • 1 Kg → $16.00
-• 3 Kg → $39.68
+• 3 Kg → $39.68  ✅ *Envío GRATIS (Cita Express)*
+
+📦 *Nota*: El envío es gratuito en *todas las promociones (más de 1 Kg)* mediante nuestro aliado *Cita Express*.
 
 ¿Deseas aprovechar alguna promoción?
 Escribe *asesor* y te conecto con un humano.`
@@ -88,24 +93,24 @@ Escribe *asesor* y te conecto con un humano.`
 // Beneficios: Khumic-100 (ácidos húmicos + fúlvicos)
 function benefitsKhumic100() {
   return (
-`🌱 *Descubre los beneficios de los ácidos húmicos y fúlvicos Khumic-100* 🌿
+`🌱 *Beneficios de Khumic-100 (ácidos húmicos + fúlvicos)* 🌿
 
 *Beneficios para las plantas:*
-1. Mejora la absorción de nutrientes 💪: ayudan a absorber mejor los nutrientes del suelo.
-2. Estimula el crecimiento y desarrollo 🌱: incrementa vigor y resistencia a enfermedades y plagas.
-3. Mejora la tolerancia a la sequía ☀️: reduce la pérdida de agua y mantiene la humedad.
-4. Aumenta la producción de frutos y flores 🌼: mejora rendimiento, calidad y sabor.
-5. Mejora la resistencia a enfermedades 🌿: disminuye la necesidad de pesticidas químicos.
+1. Mejora la absorción de nutrientes 💪.
+2. Estimula el crecimiento y desarrollo 🌱 (más vigor y resistencia).
+3. Mejora la tolerancia a la sequía ☀️ (retiene humedad).
+4. Aumenta frutos y flores 🌼 (mejor rendimiento y calidad).
+5. Refuerza la resistencia a enfermedades 🌿 (menos pesticidas).
 
 *Beneficios para el suelo:*
-1. Mejora la estructura del suelo 🌿: aumenta retención de agua y nutrientes.
-2. Aumenta la biodiversidad 🌸: promueve la salud y el equilibrio del ecosistema.
-3. Reduce la contaminación del suelo 🚮: mejora calidad de agua y aire.
+1. Mejora la estructura del suelo 🌿 (retención de agua y nutrientes).
+2. Aumenta la biodiversidad 🌸.
+3. Reduce la contaminación del suelo 🚮 (mejor calidad de agua y aire).
 
 *Beneficios para el medio ambiente:*
-1. Reduce la necesidad de fertilizantes químicos 🌿.
+1. Menos fertilizantes químicos 🌿.
 2. Mejora la calidad del agua 🌊.
-3. Reduce la emisión de GEI 🌟: contribuye a mitigar el cambio climático.`
+3. Menos gases de efecto invernadero 🌟.`
   );
 }
 
@@ -114,14 +119,31 @@ function benefitsSeaweed800() {
   return (
 `🌿🌊 *Beneficios de Khumic – Seaweed 800 (algas marinas)* 🌊🌿
 
-✨ Mejora la estructura del suelo: favorece retención de agua y nutrientes.
-✨ Estimula el crecimiento: rico en micro y macronutrientes.
-✨ Incrementa la resistencia a enfermedades: compuestos naturales que ayudan a prevenir y controlar.
-✨ Mejora la calidad de la fruta: mayor contenido de nutrientes y antioxidantes.
-✨ Reduce el estrés abiótico: ayuda frente a sequía y calor.
-✨ Fertilizante natural: fuente orgánica que no contamina suelo ni agua.
+✨ Mejora la estructura del suelo (retención de agua/nutrientes).
+✨ Estimula el crecimiento (micro y macronutrientes).
+✨ Incrementa la resistencia a enfermedades (compuestos naturales).
+✨ Mejora la calidad y sabor de la fruta (más antioxidantes).
+✨ Reduce el estrés abiótico (sequía/calor).
+✨ Fertilizante natural y orgánico (no contamina).`
+  );
+}
 
-¡Incorpora las algas marinas en tus cultivos y descubre los beneficios! 🌟`
+// Envíos y cómo encontrarnos (tu política real)
+function contactInfo() {
+  const city = process.env.CITY || 'Ibarra';
+  return (
+`📍 *Envíos y cómo encontrarnos*
+
+🏬 *Bodega principal de importación*: ${city}
+🚫 *No contamos con atención al cliente presencial.*
+📦 *Despachos con previo aviso* únicamente para *cantidades de distribuidor*.
+
+🚚 *Envíos*: 
+• *GRATIS* en *todas las promociones (más de 1 Kg)* mediante nuestro aliado *Cita Express*.
+• Cobertura a *nivel nacional*.
+
+¿Deseas coordinar un despacho o una compra mayorista?
+Escribe *asesor* y te conecto con un humano.`
   );
 }
 
@@ -218,7 +240,7 @@ app.post('/webhook', async (req, res) => {
 
     if (Array.isArray(messages)) {
       for (const m of messages) {
-        if (m.type !== 'text') continue; // manejamos texto (puedes extender a media)
+        if (m.type !== 'text') continue; // manejamos texto (se puede ampliar a media)
 
         const from = m.from;
         const text = (m.text?.body || '').trim();
@@ -273,6 +295,10 @@ app.post('/webhook', async (req, res) => {
         // 5) Beneficios Seaweed 800
         } else if (t === '5' || /beneficio.+seaweed|beneficios algas|beneficios alga/.test(t)) {
           await sendText(from, benefitsSeaweed800());
+
+        // 6) Envíos y cómo encontrarnos
+        } else if (t === '6' || /direccion|dirección|ubicacion|ubicación|como llegar|envio|envío|envios|envíos|cita express/.test(t)) {
+          await sendText(from, contactInfo());
 
         } else {
           await sendText(from, `No entendí tu mensaje 🤔.\n${mainMenu()}`);
