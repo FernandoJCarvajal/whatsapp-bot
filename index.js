@@ -1,4 +1,4 @@
-// index.js — PRO CAMPO BOT (menú reordenado: asesor = opción 7)
+// index.js — PRO CAMPO BOT (menú reordenado, horario, imágenes, PDFs, handoff y “gracias”)
 const express = require('express');
 const axios = require('axios');
 require('dotenv').config();
@@ -154,6 +154,11 @@ function thanksInfoLater() {
   return `${businessHoursText()}
 
 No te preocupes 🤗, *puedo responder todas tus dudas ahora*, y tu *compra* quedará *pendiente para confirmación* con un asesor en horario laboral.`;
+}
+
+// NUEVO: mensaje de despedida por “gracias”
+function farewellMessage() {
+  return '🙏 Gracias a ti por confiar en *PRO CAMPO BOT*. 🌱 Estamos muy gustosos de ayudarte. ¡Que tengas un excelente día! ✨';
 }
 
 // ===== Notificaciones al admin =====
@@ -323,6 +328,10 @@ app.post('/webhook', async (req, res) => {
             // Si quieres que igual te llegue aviso fuera de horario, descomenta:
             // await notifyAdminNew(from, text, tk);
           }
+
+        // NUEVO: despedida cuando el cliente dice “gracias”
+        } else if (t.includes('gracias') || t.includes('thank you') || t.includes('gracias!') || t.includes('gracias.')) {
+          await sendText(from, farewellMessage());
 
         } else {
           await sendText(from, `No entendí tu mensaje 🤔.\n${mainMenu()}`);
