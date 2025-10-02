@@ -1,10 +1,11 @@
-// index.js — Pro Campo Bot (precios + fichas + asesor + menú completo)
+// index.js — Pro Campo Bot (menú + precios + fichas + asesor + panel de respuesta del admin)
 import express from "express";
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
+app.use(express.urlencoded({ extended: true })); // para formularios HTML
 
-// === ENV: mismos nombres que tienes en Render ===
+// === ENV ===
 const {
   PORT = 3000,
   WHATSAPP_VERIFY_TOKEN,
@@ -14,10 +15,14 @@ const {
   SEAWEED_PDF_ID,
   TZ = "America/Guayaquil",
   BOT_NAME = "PRO CAMPO BOT",
+  ADMIN_PHONE,
+  ADMIN_TEMPLATE = "lead_alert",
+  ADMIN_PANEL_URL,            // p.ej. https://whatsapp-bot-xxxx.onrender.com
+  ADMIN_SECRET,               // p.ej. MiClaveFuerte123
 } = process.env;
 
-// ===== Mensajes de precios (fijos) =====
-const MSG_PRECIOS_KHUMIC = 
+// ===== Mensajes de precios fijos =====
+const MSG_PRECIOS_KHUMIC =
 `💰 *Precios y promociones de Khumic-100*
 • *1 kg:* $13.96
 • *Promo 3 kg (incluye envío):* $34.92
@@ -27,7 +32,7 @@ const MSG_PRECIOS_KHUMIC =
 📦 Envíos a todo Ecuador.
 Escribe *asesor* para comprar o *ficha 100* para la ficha técnica.`;
 
-const MSG_PRECIOS_SEAWEED = 
+const MSG_PRECIOS_SEAWEED =
 `💰 *Precios y promociones de Khumic – Seaweed 800*
 • *1 kg:* $15.87
 • *Promo 3 kg (incluye envío):* $39.68
@@ -35,7 +40,7 @@ const MSG_PRECIOS_SEAWEED =
 📦 Envíos a todo Ecuador.
 Escribe *asesor* para comprar o *ficha seaweed* para la ficha técnica.`;
 
-// ===== Diagnóstico de arranque =====
+// ===== Diagnóstico =====
 (function bootCheck() {
   const mask = (s) => (s ? s.slice(0, 4) + "***" : "MISSING");
   console.log("ENV CHECK:", {
@@ -46,6 +51,10 @@ Escribe *asesor* para comprar o *ficha seaweed* para la ficha técnica.`;
     SEAWEED_PDF_ID,
     TZ,
     BOT_NAME,
+    ADMIN_PHONE,
+    ADMIN_TEMPLATE,
+    ADMIN_PANEL_URL,
+    ADMIN_SECRET: ADMIN_SECRET ? "SET" : "MISSING",
   });
 })();
 
@@ -113,16 +122,23 @@ function detectarIntent(texto) {
 }
 
 // ===== WhatsApp helpers =====
-async function enviarTexto(to, body) {
-  if (!PHONE_NUMBER_ID) return console.error("PHONE_NUMBER_ID vacío.");
-  const url = `https://graph.facebook.com/v20.0/${PHONE_NUMBER_ID}/messages`;
-  const payload = { messaging_product: "whatsapp", to, type: "text", text: { body } };
+async function waFetch(path, payload) {
+  const url = `https://graph.facebook.com/v20.0/${PHONE_NUMBER_ID}/${path}`;
   const r = await fetch(url, {
     method: "POST",
     headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  if (!r.ok) console.error("WA TEXT ERR:", await r.text());
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+async function enviarTexto(to, body) {
+  if (!PHONE_NUMBER_ID) return console.error("PHONE_NUMBER_ID vacío.");
+  try {
+    await waFetch("messages", { messaging_product: "whatsapp", to, type: "text", text: { body } });
+  } catch (e) {
+    console.error("WA TEXT ERR:", e.message);
+  }
 }
 async function enviarDocumentoPorId(to, { mediaId, filename, caption }) {
   if (!PHONE_NUMBER_ID) return console.error("PHONE_NUMBER_ID vacío.");
@@ -130,18 +146,67 @@ async function enviarDocumentoPorId(to, { mediaId, filename, caption }) {
     console.error("MEDIA_ID vacío:", filename);
     return enviarTexto(to, "No encuentro la ficha ahora. Intenta en unos minutos 🙏");
   }
-  const url = `https://graph.facebook.com/v20.0/${PHONE_NUMBER_ID}/messages`;
-  const payload = {
-    messaging_product: "whatsapp",
-    to, type: "document",
-    document: { id: mediaId, filename, caption },
-  };
-  const r = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!r.ok) console.error("WA DOC ERR:", await r.text());
+  try {
+    await waFetch("messages", {
+      messaging_product: "whatsapp",
+      to,
+      type: "document",
+      document: { id: mediaId, filename, caption },
+    });
+  } catch (e) {
+    console.error("WA DOC ERR:", e.message);
+  }
+}
+
+// ===== Notificación al admin con link de respuesta =====
+async function notificarAdmin({ clienteNombre, clienteNumeroSinPlus, mensaje }) {
+  if (!ADMIN_PHONE) {
+    console.warn("ADMIN_PHONE no definido.");
+    return;
+  }
+  const replyLink = ADMIN_PANEL_URL && ADMIN_SECRET
+    ? `${ADMIN_PANEL_URL}/admin/reply?to=${encodeURIComponent(clienteNumeroSinPlus)}&name=${encodeURIComponent(clienteNombre || "Cliente")}&t=${encodeURIComponent(ADMIN_SECRET)}`
+    : null;
+
+  // 1) intentar PLANTILLA
+  if (ADMIN_PANEL_URL && ADMIN_SECRET) {
+    try {
+      await waFetch("messages", {
+        messaging_product: "whatsapp",
+        to: ADMIN_PHONE,
+        type: "template",
+        template: {
+          name: ADMIN_TEMPLATE,
+          language: { code: "es" },
+          components: [{
+            type: "body",
+            parameters: [
+              { type: "text", text: BOT_NAME },
+              { type: "text", text: clienteNombre || "Cliente" },
+              { type: "text", text: `+${clienteNumeroSinPlus}` },
+              { type: "text", text: mensaje || "(sin mensaje)" },
+              { type: "text", text: clienteNumeroSinPlus }, // para https://wa.me/{{5}}
+            ]
+          }]
+        }
+      });
+      // Añadimos un mensaje con el link del panel (por si la plantilla no lo incluye)
+      await enviarTexto(ADMIN_PHONE, `Responder desde el bot: ${replyLink}`);
+      return;
+    } catch (e) {
+      console.error("ADMIN TEMPLATE ERR:", e.message);
+      // cae a texto
+    }
+  }
+
+  // 2) fallback: texto simple (requiere ventana 24h)
+  const txt =
+    `🔔 *Nuevo contacto para ${BOT_NAME}*\n` +
+    `Nombre: ${clienteNombre || "Cliente"}\n` +
+    `Número: +${clienteNumeroSinPlus}\n` +
+    `Mensaje: ${mensaje || "(sin mensaje)"}\n` +
+    (replyLink ? `Responder desde el bot: ${replyLink}` : `Abrir chat: https://wa.me/${clienteNumeroSinPlus}`);
+  await enviarTexto(ADMIN_PHONE, txt);
 }
 
 // ===== Anti-duplicados =====
@@ -169,14 +234,16 @@ app.post("/webhook", async (req, res) => {
   try {
     const entry = req.body.entry?.[0];
     const change = entry?.changes?.[0];
-    const msg = change?.value?.messages?.[0];
+    const value = change?.value;
+    const msg = value?.messages?.[0];
     if (!msg) return;
 
     const msgId = msg.id;
     if (yaProcesado(msgId)) return;
 
-    const from = msg.from;
+    const from = msg.from; // número del cliente (sin "+")
     const texto = msg.text?.body || "";
+    const clienteNombre = value?.contacts?.[0]?.profile?.name || "";
     const intent = detectarIntent(texto);
     const enHorario = esHorarioLaboral();
 
@@ -198,21 +265,65 @@ app.post("/webhook", async (req, res) => {
         from,
         "🚚 *Envíos y cómo encontrarnos*\nHacemos envíos en Ecuador. Dime tu *ciudad* para calcular costo y tiempo.\nHorario: L–V 08:00–17:30, Sáb 08:00–13:00.\nEscribe *asesor* si deseas atención humana."
       );
-    if (intent === "menu_fichas") return enviarTexto(from, "📑 *Fichas técnicas disponibles*\nEscribe:\n\n• *ficha 100* → Khumic-100\n• *ficha seaweed* → Seaweed 800");
+    if (intent === "menu_fichas") return enviarTexto(from, menuFichas());
     if (intent === "ficha_khumic")
       return enviarDocumentoPorId(from, { mediaId: KHUMIC_PDF_ID, filename: "Khumic-100-ficha.pdf", caption: "📄 Ficha técnica de Khumic-100 (ácidos húmicos + fúlvicos)." });
     if (intent === "ficha_seaweed")
       return enviarDocumentoPorId(from, { mediaId: SEAWEED_PDF_ID, filename: "Seaweed-800-ficha.pdf", caption: "📄 Ficha técnica de Khumic – Seaweed 800 (algas marinas)." });
+
     if (intent === "asesor") {
       const msj = enHorario
         ? "¡Perfecto! Te conecto con un asesor ahora mismo. 👨‍💼📲"
         : "Gracias por escribir. Un asesor te contactará en horario laboral. Puedo ayudarte por aquí mientras tanto. 🕗";
-      return enviarTexto(from, msj);
+      await enviarTexto(from, msj);
+
+      await notificarAdmin({
+        clienteNombre,
+        clienteNumeroSinPlus: from,
+        mensaje: texto,
+      });
+      return;
     }
+
     if (intent === "gracias") return enviarTexto(from, "¡Con mucho gusto! 😊 ¿Algo más en lo que te apoye?");
     return enviarTexto(from, menuPrincipal(enHorario)); // fallback
   } catch (e) {
     console.error("Webhook error:", e);
+  }
+});
+
+// ===== Panel del admin: responder desde el número del BOT =====
+app.get("/admin/reply", (req, res) => {
+  const { to, name, t } = req.query;
+  if (!ADMIN_SECRET || t !== ADMIN_SECRET) return res.status(403).send("Forbidden");
+  const html = `
+<!doctype html><meta charset="utf-8"/>
+<title>Responder como ${BOT_NAME}</title>
+<style>
+  body{font-family:sans-serif;max-width:720px;margin:30px auto;padding:0 16px}
+  input,textarea,button{width:100%;padding:10px;margin:8px 0;font-size:16px}
+  .muted{color:#666}
+</style>
+<h2>Responder como <b>${BOT_NAME}</b></h2>
+<p class="muted">Al cliente: <b>${name || "Cliente"}</b> — <code>${to}</code></p>
+<form method="POST" action="/admin/reply">
+  <input type="hidden" name="to" value="${to}"/>
+  <input type="hidden" name="t" value="${t}"/>
+  <textarea name="message" rows="6" placeholder="Escribe tu respuesta..." required></textarea>
+  <button type="submit">Enviar desde el bot</button>
+</form>`;
+  res.status(200).send(html);
+});
+
+app.post("/admin/reply", async (req, res) => {
+  const { to, message, t } = req.body || {};
+  if (!ADMIN_SECRET || t !== ADMIN_SECRET) return res.status(403).send("Forbidden");
+  if (!to || !message) return res.status(400).send("Faltan datos");
+  try {
+    await enviarTexto(to, message);
+    res.status(200).send("<p>✅ Enviado. Cierra esta pestaña.</p>");
+  } catch (e) {
+    res.status(500).send(`<pre>Error: ${String(e)}</pre>`);
   }
 });
 
