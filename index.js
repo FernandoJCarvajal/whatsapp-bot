@@ -1,23 +1,39 @@
-// index.js — Pro Campo Bot (compatible con tus variables de Render)
+// index.js — Pro Campo Bot (precios + fichas + asesor + menú completo)
 import express from "express";
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
-// === ENV: usando exactamente los nombres que tienes en Render ===
+// === ENV: mismos nombres que tienes en Render ===
 const {
   PORT = 3000,
-  WHATSAPP_VERIFY_TOKEN,      // <- tu verify token
-  WHATSAPP_TOKEN,             // <- tu token EAA…
-  PHONE_NUMBER_ID,            // <- 844566595398410
-  KHUMIC_PDF_ID,              // <- media_id Khumic-100
-  SEAWEED_PDF_ID,             // <- media_id Seaweed 800
+  WHATSAPP_VERIFY_TOKEN,
+  WHATSAPP_TOKEN,
+  PHONE_NUMBER_ID,
+  KHUMIC_PDF_ID,
+  SEAWEED_PDF_ID,
   TZ = "America/Guayaquil",
-  BOT_NAME = "PRO CAMPO BOT", // <- lo muestras en el saludo
-  // (opcionales, para precio)
-  KHUMIC_PRICE_MSG,
-  SEAWEED_PRICE_MSG,
+  BOT_NAME = "PRO CAMPO BOT",
 } = process.env;
+
+// ===== Mensajes de precios (fijos) =====
+const MSG_PRECIOS_KHUMIC = 
+`💰 *Precios y promociones de Khumic-100*
+• *1 kg:* $13.96
+• *Promo 3 kg (incluye envío):* $34.92
+• *Promo 25 kg (incluye envío):* $226.98
+• *Promo 50 kg (incluye envío):* $436.50
+
+📦 Envíos a todo Ecuador.
+Escribe *asesor* para comprar o *ficha 100* para la ficha técnica.`;
+
+const MSG_PRECIOS_SEAWEED = 
+`💰 *Precios y promociones de Khumic – Seaweed 800*
+• *1 kg:* $15.87
+• *Promo 3 kg (incluye envío):* $39.68
+
+📦 Envíos a todo Ecuador.
+Escribe *asesor* para comprar o *ficha seaweed* para la ficha técnica.`;
 
 // ===== Diagnóstico de arranque =====
 (function bootCheck() {
@@ -48,7 +64,7 @@ function esHorarioLaboral(date = new Date()) {
     hour: "2-digit", minute: "2-digit",
   }).format(date);
   const now = new Date(f);
-  const d = now.getDay();               // 0=Dom ... 6=Sáb
+  const d = now.getDay(); // 0=Dom ... 6=Sáb
   const m = now.getHours() * 60 + now.getMinutes();
   const LV = d >= 1 && d <= 5 && m >= 8 * 60 && m <= 17 * 60 + 30;
   const SAB = d === 6 && m >= 8 * 60 && m <= 13 * 60;
@@ -138,7 +154,7 @@ function yaProcesado(id) {
   return false;
 }
 
-// ===== Webhook verify (GET) — usa WHATSAPP_VERIFY_TOKEN =====
+// ===== Webhook verify (GET) =====
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
@@ -165,18 +181,8 @@ app.post("/webhook", async (req, res) => {
     const enHorario = esHorarioLaboral();
 
     if (intent === "inicio") return enviarTexto(from, menuPrincipal(enHorario));
-    if (intent === "op1")
-      return enviarTexto(
-        from,
-        KHUMIC_PRICE_MSG ||
-          "💰 *Precios y promociones de Khumic-100*\nEscríbenos *asesor* para cotización actualizada y promociones vigentes. También puedo enviarte la ficha con *ficha 100*."
-      );
-    if (intent === "op2")
-      return enviarTexto(
-        from,
-        SEAWEED_PRICE_MSG ||
-          "💰 *Precios y promociones de Khumic – Seaweed 800*\nEscríbenos *asesor* para cotización actualizada y promociones vigentes. También puedo enviarte la ficha con *ficha seaweed*."
-      );
+    if (intent === "op1") return enviarTexto(from, MSG_PRECIOS_KHUMIC);
+    if (intent === "op2") return enviarTexto(from, MSG_PRECIOS_SEAWEED);
     if (intent === "op3")
       return enviarTexto(
         from,
@@ -192,29 +198,19 @@ app.post("/webhook", async (req, res) => {
         from,
         "🚚 *Envíos y cómo encontrarnos*\nHacemos envíos en Ecuador. Dime tu *ciudad* para calcular costo y tiempo.\nHorario: L–V 08:00–17:30, Sáb 08:00–13:00.\nEscribe *asesor* si deseas atención humana."
       );
-    if (intent === "menu_fichas") return enviarTexto(from, menuFichas());
+    if (intent === "menu_fichas") return enviarTexto(from, "📑 *Fichas técnicas disponibles*\nEscribe:\n\n• *ficha 100* → Khumic-100\n• *ficha seaweed* → Seaweed 800");
     if (intent === "ficha_khumic")
-      return enviarDocumentoPorId(from, {
-        mediaId: KHUMIC_PDF_ID,
-        filename: "Khumic-100-ficha.pdf",
-        caption: "📄 Ficha técnica de Khumic-100 (ácidos húmicos + fúlvicos).",
-      });
+      return enviarDocumentoPorId(from, { mediaId: KHUMIC_PDF_ID, filename: "Khumic-100-ficha.pdf", caption: "📄 Ficha técnica de Khumic-100 (ácidos húmicos + fúlvicos)." });
     if (intent === "ficha_seaweed")
-      return enviarDocumentoPorId(from, {
-        mediaId: SEAWEED_PDF_ID,
-        filename: "Seaweed-800-ficha.pdf",
-        caption: "📄 Ficha técnica de Khumic – Seaweed 800 (algas marinas).",
-      });
+      return enviarDocumentoPorId(from, { mediaId: SEAWEED_PDF_ID, filename: "Seaweed-800-ficha.pdf", caption: "📄 Ficha técnica de Khumic – Seaweed 800 (algas marinas)." });
     if (intent === "asesor") {
       const msj = enHorario
         ? "¡Perfecto! Te conecto con un asesor ahora mismo. 👨‍💼📲"
-        : "Gracias por escribir. Un asesor te contactará en horario laboral. Yo puedo ayudarte por aquí mientras tanto. 🕗";
+        : "Gracias por escribir. Un asesor te contactará en horario laboral. Puedo ayudarte por aquí mientras tanto. 🕗";
       return enviarTexto(from, msj);
     }
     if (intent === "gracias") return enviarTexto(from, "¡Con mucho gusto! 😊 ¿Algo más en lo que te apoye?");
-
-    // Fallback ⇒ mostrar menú
-    return enviarTexto(from, menuPrincipal(enHorario));
+    return enviarTexto(from, menuPrincipal(enHorario)); // fallback
   } catch (e) {
     console.error("Webhook error:", e);
   }
