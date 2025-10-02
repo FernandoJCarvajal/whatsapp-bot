@@ -12,6 +12,18 @@ const {
   SEAWEED_PDF_ID,
 } = process.env;
 
+// --- Diagnóstico: muestra si las ENV llegaron (sin exponer token completo)
+(function bootCheck() {
+  const reqEnv = {
+    VERIFY_TOKEN: !!VERIFY_TOKEN,
+    WHATSAPP_TOKEN: WHATSAPP_TOKEN ? `${WHATSAPP_TOKEN.slice(0,4)}***` : "MISSING",
+    PHONE_NUMBER_ID,
+    KHUMIC_PDF_ID,
+    SEAWEED_PDF_ID,
+  };
+  console.log("ENV CHECK:", reqEnv);
+})();
+
 function normalizarTexto(t = "") {
   return (t || "")
     .toLowerCase()
@@ -40,6 +52,11 @@ async function enviarTexto(to, body) {
 }
 
 async function enviarDocumentoPorId(to, { mediaId, filename, caption }) {
+  if (!mediaId || `${mediaId}`.toLowerCase() === "undefined") {
+    console.error("MEDIA_ID VACÍO para", filename);
+    await enviarTexto(to, "Lo siento, ahora mismo no encuentro la ficha. Intenta nuevamente en un momento 🙏");
+    return;
+  }
   const url = `https://graph.facebook.com/v20.0/${PHONE_NUMBER_ID}/messages`;
   const payload = {
     messaging_product: "whatsapp",
@@ -52,10 +69,10 @@ async function enviarDocumentoPorId(to, { mediaId, filename, caption }) {
     headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  if (!r.ok) console.error("WA DOC ERR:", await r.text());
+  if (!r.ok) console.error("ERROR DE DOCUMENTO DE WA:", await r.text());
 }
 
-// Evita procesar el mismo mensaje dos veces (reintentos de Meta)
+// Anti-duplicados
 const processed = new Set();
 function yaProcesado(id) {
   if (!id) return false;
@@ -76,7 +93,7 @@ app.get("/webhook", (req, res) => {
 
 // Webhook receive (POST)
 app.post("/webhook", async (req, res) => {
-  res.sendStatus(200); // responde rápido a Meta
+  res.sendStatus(200);
 
   try {
     const entry = req.body.entry?.[0];
@@ -90,7 +107,6 @@ app.post("/webhook", async (req, res) => {
     const from = msg.from;
     const texto = msg.text?.body || "";
 
-    // Menú de fichas (opción 6 o palabra "ficha")
     if (texto.trim() === "6" || detectarFicha(texto) === "menu_fichas") {
       await enviarTexto(
         from,
@@ -99,10 +115,8 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // Envío de PDFs por media_id
     const ficha = detectarFicha(texto);
     if (ficha === "khumic") {
-      if (!KHUMIC_PDF_ID) { await enviarTexto(from, "No encuentro la ficha de Khumic-100 🙏"); return; }
       await enviarDocumentoPorId(from, {
         mediaId: KHUMIC_PDF_ID,
         filename: "Khumic-100-ficha.pdf",
@@ -110,9 +124,7 @@ app.post("/webhook", async (req, res) => {
       });
       return;
     }
-
     if (ficha === "seaweed") {
-      if (!SEAWEED_PDF_ID) { await enviarTexto(from, "No encuentro la ficha de Seaweed 800 🙏"); return; }
       await enviarDocumentoPorId(from, {
         mediaId: SEAWEED_PDF_ID,
         filename: "Seaweed-800-ficha.pdf",
