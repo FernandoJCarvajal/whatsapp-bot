@@ -1,16 +1,22 @@
+// index.js — Pro Campo Bot (menú completo + fichas PDF + asesor + horario)
 import express from "express";
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
+// ====== ENV ======
 const {
   PORT = 3000,
   VERIFY_TOKEN,
   WHATSAPP_TOKEN,
   PHONE_NUMBER_ID,
-  KHUMIC_PDF_ID,        // 852677735604299
-  SEAWEED_PDF_ID,       // 10792914807712453
+  KHUMIC_PDF_ID,        // p.ej. 852677735604299
+  SEAWEED_PDF_ID,       // p.ej. 10792914807712453
   TZ = "America/Guayaquil",
+
+  // (Opcional) Mensajes personalizables sin redeploy de código
+  KHUMIC_PRICE_MSG,     // texto para opción 1
+  SEAWEED_PRICE_MSG,    // texto para opción 2
 } = process.env;
 
 // ====== Diagnóstico en arranque ======
@@ -26,7 +32,7 @@ const {
   });
 })();
 
-// ====== Utilidades ======
+// ====== Utils ======
 function normalizarTexto(t = "") {
   return (t || "")
     .toLowerCase()
@@ -36,39 +42,85 @@ function normalizarTexto(t = "") {
 }
 
 function esHorarioLaboral(date = new Date()) {
-  // Convertir a zona horaria local
-  const fmt = new Intl.DateTimeFormat("en-US", {
+  // Adaptar a zona horaria de Ecuador
+  const f = new Intl.DateTimeFormat("en-US", {
     timeZone: TZ,
     hour12: false,
     year: "numeric", month: "2-digit", day: "2-digit",
     hour: "2-digit", minute: "2-digit",
-  });
-  const parsed = new Date(fmt.format(date));
-  const d = parsed.getDay(); // 0 dom, 1 lun ... 6 sab
-  const h = parsed.getHours(), m = parsed.getMinutes();
-  const hm = h * 60 + m;
-
-  const LV = d >= 1 && d <= 5 && hm >= 8 * 60 && hm <= 17 * 60 + 30;
-  const SAB = d === 6 && hm >= 8 * 60 && hm <= 13 * 60;
+  }).format(date);
+  const now = new Date(f);
+  const d = now.getDay(); // 0 dom, 1 lun, ... 6 sáb
+  const m = now.getHours() * 60 + now.getMinutes();
+  const LV = d >= 1 && d <= 5 && m >= 8 * 60 && m <= 17 * 60 + 30;
+  const SAB = d === 6 && m >= 8 * 60 && m <= 13 * 60;
   return LV || SAB;
 }
 
+// ====== Menús ======
+function menuPrincipal(enHorario) {
+  const saludo =
+    "🤖🌱 *¡Hola! Soy PRO CAMPO BOT* y estoy aquí para ayudarte.\n" +
+    "Elige una opción escribiendo el número:\n\n";
+  const nota = enHorario
+    ? ""
+    : "_Fuera de horario: puedo darte información y dejamos la *compra* para el horario laboral (L–V 08:00–17:30, Sáb 08:00–13:00)._ \n\n";
+
+  return (
+    saludo +
+    nota +
+    "1️⃣  *Precios y promociones de Khumic-100* (ácidos húmicos + fúlvicos)\n" +
+    "2️⃣  *Precios y promociones de Khumic – Seaweed 800* (algas marinas)\n" +
+    "3️⃣  *Beneficios de Khumic-100* (ácidos húmicos + fúlvicos)\n" +
+    "4️⃣  *Beneficios de Khumic – Seaweed 800* (algas marinas)\n" +
+    "5️⃣  *Envíos y cómo encontrarnos*\n" +
+    "6️⃣  *Fichas técnicas (PDF)*\n" +
+    "7️⃣  *Hablar con un asesor* 👨‍💼\n" +
+    "0️⃣  *Volver al inicio*"
+  );
+}
+
+function menuFichas() {
+  return (
+    "📑 *Fichas técnicas disponibles*\n" +
+    "Escribe:\n\n" +
+    "• *ficha 100*  → Khumic-100\n" +
+    "• *ficha seaweed* → Seaweed 800"
+  );
+}
+
+// ====== Intents ======
 function detectarIntent(texto) {
   const t = normalizarTexto(texto);
 
-  if (/^(hola|buen[oa]s?|menu|men[uú]|inicio|start)$/i.test(t)) return "inicio";
-  if (/^(6|ficha|fichas)$/i.test(t)) return "menu_fichas";
+  // Menú / inicio
+  if (/^(hola|buen[oa]s?|menu|men[uú]|inicio|start|0)$/i.test(t)) return "inicio";
+
+  // Opción numérica directa
+  if (/^1$/.test(t)) return "op1";
+  if (/^2$/.test(t)) return "op2";
+  if (/^3$/.test(t)) return "op3";
+  if (/^4$/.test(t)) return "op4";
+  if (/^5$/.test(t)) return "op5";
+  if (/^6$/.test(t) || /^fichas?$/.test(t)) return "menu_fichas";
+  if (/^7$/.test(t)) return "asesor";
+
+  // Fichas concretas
   if (/\bficha\b/.test(t) && /\b(100|khumic|humic)\b/.test(t)) return "ficha_khumic";
   if (/\bficha\b/.test(t) && /\b(seaweed|800|algas)\b/.test(t)) return "ficha_seaweed";
 
-  if (/^(7|asesor|agente|humano|hablar con( un)? asesor|contactar)$/i.test(t)) return "asesor";
+  if (/asesor|agente|humano|hablar con( un)? asesor|contactar/i.test(t)) return "asesor";
   if (/gracias|muchas gracias|mil gracias|thank/i.test(t)) return "gracias";
 
-  if (/volver( al)? inicio|menu|men[uú]|inicio/i.test(t)) return "inicio";
   return "fallback";
 }
 
+// ====== WhatsApp helpers ======
 async function enviarTexto(to, body) {
+  if (!PHONE_NUMBER_ID) {
+    console.error("PHONE_NUMBER_ID vacío; no puedo enviar.");
+    return;
+  }
   const url = `https://graph.facebook.com/v20.0/${PHONE_NUMBER_ID}/messages`;
   const payload = { messaging_product: "whatsapp", to, type: "text", text: { body } };
   const r = await fetch(url, {
@@ -80,8 +132,12 @@ async function enviarTexto(to, body) {
 }
 
 async function enviarDocumentoPorId(to, { mediaId, filename, caption }) {
-  if (!mediaId || `${mediaId}`.toLowerCase() === "undefined") {
-    console.error("MEDIA_ID VACÍO:", filename);
+  if (!PHONE_NUMBER_ID) {
+    console.error("PHONE_NUMBER_ID vacío; no puedo enviar.");
+    return;
+  }
+  if (!mediaId) {
+    console.error("MEDIA_ID vacío:", filename);
     await enviarTexto(to, "Lo siento, no encuentro la ficha ahora. Intenta de nuevo en unos minutos 🙏");
     return;
   }
@@ -100,35 +156,7 @@ async function enviarDocumentoPorId(to, { mediaId, filename, caption }) {
   if (!r.ok) console.error("WA DOC ERR:", await r.text());
 }
 
-function textoMenuPrincipal(enHorario) {
-  const nota = enHorario
-    ? "Estamos en horario de atención. ¿Qué deseas hacer?"
-    : "Fuera de horario: puedo darte info y dejamos la *compra* para el horario laboral (L–V 08:00–17:30, Sáb 08:00–13:00).";
-  return (
-    "🧭 *Menú principal*\n" +
-    `${nota}\n\n` +
-    "1) Precios y promociones de *Khumic-100*\n" +
-    "2) Precios y promociones de *Khumic – Seaweed 800*\n" +
-    "3) Beneficios de *Khumic-100*\n" +
-    "4) Beneficios de *Khumic – Seaweed 800*\n" +
-    "5) Envíos y cómo encontrarnos\n" +
-    "6) *Fichas técnicas (PDF)*\n" +
-    "7) *Hablar con un asesor* 👨‍💼\n" +
-    "8) Volver al inicio\n\n" +
-    "Escribe el número o la opción."
-  );
-}
-
-function textoMenuFichas() {
-  return (
-    "📑 *Fichas técnicas disponibles*\n" +
-    "Escribe:\n\n" +
-    "• *ficha 100* → Khumic-100\n" +
-    "• *ficha seaweed* → Seaweed 800"
-  );
-}
-
-// ====== Anti-duplicados (reintentos de Meta) ======
+// ====== Anti-duplicados (reintentos Meta) ======
 const processed = new Set();
 function yaProcesado(id) {
   if (!id) return false;
@@ -162,17 +190,70 @@ app.post("/webhook", async (req, res) => {
 
     const from = msg.from;
     const texto = msg.text?.body || "";
-    const enHorario = esHorarioLaboral();
     const intent = detectarIntent(texto);
+    const enHorario = esHorarioLaboral();
 
-    // --- Rutas de intent ---
-    if (intent === "inicio" || intent === "fallback") {
-      await enviarTexto(from, textoMenuPrincipal(enHorario));
+    // ---- Rutas ----
+    if (intent === "inicio") {
+      await enviarTexto(from, menuPrincipal(enHorario));
+      return;
+    }
+
+    if (intent === "op1") {
+      const body =
+        KHUMIC_PRICE_MSG ||
+        "💰 *Precios y promociones de Khumic-100*\n" +
+          "Escríbenos *asesor* para cotización actualizada y promociones vigentes. También puedo enviarte la ficha técnica con *ficha 100*.";
+      await enviarTexto(from, body);
+      return;
+    }
+
+    if (intent === "op2") {
+      const body =
+        SEAWEED_PRICE_MSG ||
+        "💰 *Precios y promociones de Khumic – Seaweed 800*\n" +
+          "Escríbenos *asesor* para cotización actualizada y promociones vigentes. También puedo enviarte la ficha técnica con *ficha seaweed*.";
+      await enviarTexto(from, body);
+      return;
+    }
+
+    if (intent === "op3") {
+      await enviarTexto(
+        from,
+        "🌿 *Beneficios de Khumic-100*\n" +
+          "• Mejora estructura del suelo y retención de agua.\n" +
+          "• Aumenta disponibilidad de nutrientes (quelatación natural).\n" +
+          "• Estimula raíces y actividad microbiana.\n" +
+          "• Favorece la absorción de N-P-K y microelementos."
+      );
+      return;
+    }
+
+    if (intent === "op4") {
+      await enviarTexto(
+        from,
+        "🌊 *Beneficios de Khumic – Seaweed 800*\n" +
+          "• Bioestimulante de origen marino (algas).\n" +
+          "• Mayor brotación, floración y amarre de fruto.\n" +
+          "• Tolerancia al estrés (sequía, salinidad, temperatura).\n" +
+          "• Mejor calidad y rendimiento del cultivo."
+      );
+      return;
+    }
+
+    if (intent === "op5") {
+      await enviarTexto(
+        from,
+        "🚚 *Envíos y cómo encontrarnos*\n" +
+          "Hacemos envíos en Ecuador. Dime tu *ciudad* para calcular costo y tiempo de entrega.\n" +
+          "Horario de atención: L–V 08:00–17:30, Sáb 08:00–13:00.\n" +
+          "Si prefieres, escribe *asesor* y te contactamos."
+      );
       return;
     }
 
     if (intent === "menu_fichas") {
-      await enviarTexto(from, textoMenuFichas());
+      await enviarTexto(from, menuFichas());
       return;
     }
 
@@ -189,7 +270,7 @@ app.post("/webhook", async (req, res) => {
       await enviarDocumentoPorId(from, {
         mediaId: SEAWEED_PDF_ID,
         filename: "Seaweed-800-ficha.pdf",
-        caption: "📄 Ficha técnica de Seaweed 800 (algas marinas).",
+        caption: "📄 Ficha técnica de Khumic – Seaweed 800 (algas marinas).",
       });
       return;
     }
@@ -197,21 +278,23 @@ app.post("/webhook", async (req, res) => {
     if (intent === "asesor") {
       const msj = enHorario
         ? "¡Perfecto! Te conecto con un asesor ahora mismo. 👨‍💼📲"
-        : "Gracias por escribir. Un asesor te contactará en el horario laboral. Yo puedo ayudarte por aquí y la *compra* la dejamos para el horario de atención. 🕗";
+        : "Gracias por escribir. Un asesor te contactará en el horario laboral. Puedo ayudarte por aquí y dejamos la *compra* para el horario de atención. 🕗";
       await enviarTexto(from, msj);
-      // Aquí podrías disparar una notificación interna a tu equipo
       return;
     }
 
     if (intent === "gracias") {
-      await enviarTexto(from, "¡Con mucho gusto! 😊 Estamos muy gustosos de ayudarte. ¿Algo más en lo que te apoye?");
+      await enviarTexto(from, "¡Con mucho gusto! 😊 ¿Necesitas algo más?");
       return;
     }
+
+    // fallback
+    await enviarTexto(from, menuPrincipal(enHorario));
   } catch (e) {
     console.error("Webhook error:", e);
   }
 });
 
-// Salud
+// Healthcheck
 app.get("/", (_req, res) => res.send("OK"));
 app.listen(PORT, () => console.log(`Bot listo en puerto ${PORT}`));
