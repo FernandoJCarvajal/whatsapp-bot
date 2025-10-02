@@ -1,11 +1,11 @@
-// index.js — Pro Campo Bot (menú + precios + fichas + asesor + panel de respuesta del admin)
+// index.js — Pro Campo Bot (menú + precios + fichas + asesor + panel admin)
 import express from "express";
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
-app.use(express.urlencoded({ extended: true })); // para formularios HTML
+app.use(express.urlencoded({ extended: true })); // para formularios del panel
 
-// === ENV ===
+// === ENV: usa exactamente los nombres de Render ===
 const {
   PORT = 3000,
   WHATSAPP_VERIFY_TOKEN,
@@ -15,13 +15,13 @@ const {
   SEAWEED_PDF_ID,
   TZ = "America/Guayaquil",
   BOT_NAME = "PRO CAMPO BOT",
-  ADMIN_PHONE,
-  ADMIN_TEMPLATE = "lead_alert",
-  ADMIN_PANEL_URL,            // p.ej. https://whatsapp-bot-xxxx.onrender.com
-  ADMIN_SECRET,               // p.ej. MiClaveFuerte123
+  ADMIN_PHONE,                     // 5939XXXXXXXX (sin +)
+  ADMIN_TEMPLATE = "lead_alert",   // nombre de la plantilla aprobada
+  ADMIN_PANEL_URL,                 // https://tu-app.onrender.com
+  ADMIN_SECRET,                    // clave simple para proteger el panel
 } = process.env;
 
-// ===== Mensajes de precios fijos =====
+// ===== Textos de precios (fijos) =====
 const MSG_PRECIOS_KHUMIC =
 `💰 *Precios y promociones de Khumic-100*
 • *1 kg:* $13.96
@@ -40,7 +40,7 @@ const MSG_PRECIOS_SEAWEED =
 📦 Envíos a todo Ecuador.
 Escribe *asesor* para comprar o *ficha seaweed* para la ficha técnica.`;
 
-// ===== Diagnóstico =====
+// ===== Diagnóstico en arranque =====
 (function bootCheck() {
   const mask = (s) => (s ? s.slice(0, 4) + "***" : "MISSING");
   console.log("ENV CHECK:", {
@@ -66,6 +66,7 @@ function normalizarTexto(t = "") {
     .replace(/\p{Diacritic}/gu, "")
     .trim();
 }
+
 function esHorarioLaboral(date = new Date()) {
   const f = new Intl.DateTimeFormat("en-US", {
     timeZone: TZ, hour12: false,
@@ -99,6 +100,7 @@ function menuPrincipal(enHorario) {
     "0) Volver al inicio"
   );
 }
+
 function menuFichas() {
   return "📑 *Fichas técnicas disponibles*\nEscribe:\n\n• *ficha 100* → Khumic-100\n• *ficha seaweed* → Seaweed 800";
 }
@@ -132,6 +134,7 @@ async function waFetch(path, payload) {
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
+
 async function enviarTexto(to, body) {
   if (!PHONE_NUMBER_ID) return console.error("PHONE_NUMBER_ID vacío.");
   try {
@@ -140,6 +143,7 @@ async function enviarTexto(to, body) {
     console.error("WA TEXT ERR:", e.message);
   }
 }
+
 async function enviarDocumentoPorId(to, { mediaId, filename, caption }) {
   if (!PHONE_NUMBER_ID) return console.error("PHONE_NUMBER_ID vacío.");
   if (!mediaId) {
@@ -158,58 +162,50 @@ async function enviarDocumentoPorId(to, { mediaId, filename, caption }) {
   }
 }
 
-// ===== Notificación al admin con link de respuesta =====
+// ===== Notificación al ADMIN por PLANTILLA (con link del panel) =====
 async function notificarAdmin({ clienteNombre, clienteNumeroSinPlus, mensaje }) {
   if (!ADMIN_PHONE) {
-    console.warn("ADMIN_PHONE no definido.");
+    console.warn("ADMIN_PHONE no definido. No se enviará notificación.");
     return;
   }
-  const replyLink = ADMIN_PANEL_URL && ADMIN_SECRET
-    ? `${ADMIN_PANEL_URL}/admin/reply?to=${encodeURIComponent(clienteNumeroSinPlus)}&name=${encodeURIComponent(clienteNombre || "Cliente")}&t=${encodeURIComponent(ADMIN_SECRET)}`
-    : null;
+  try {
+    const replyLink =
+      ADMIN_PANEL_URL && ADMIN_SECRET
+        ? `${ADMIN_PANEL_URL}/admin/reply?to=${encodeURIComponent(clienteNumeroSinPlus)}&name=${encodeURIComponent(clienteNombre || "Cliente")}&t=${encodeURIComponent(ADMIN_SECRET)}`
+        : "";
 
-  // 1) intentar PLANTILLA
-  if (ADMIN_PANEL_URL && ADMIN_SECRET) {
-    try {
-      await waFetch("messages", {
-        messaging_product: "whatsapp",
-        to: ADMIN_PHONE,
-        type: "template",
-        template: {
-          name: ADMIN_TEMPLATE,
-          language: { code: "es" },
-          components: [{
+    await waFetch("messages", {
+      messaging_product: "whatsapp",
+      to: ADMIN_PHONE, // 5939XXXXXXXX (sin +)
+      type: "template",
+      template: {
+        name: ADMIN_TEMPLATE, // p.ej. lead_alert
+        language: { code: "es" },
+        components: [
+          {
             type: "body",
             parameters: [
               { type: "text", text: BOT_NAME },
               { type: "text", text: clienteNombre || "Cliente" },
               { type: "text", text: `+${clienteNumeroSinPlus}` },
-              { type: "text", text: mensaje || "(sin mensaje)" },
-              { type: "text", text: clienteNumeroSinPlus }, // para https://wa.me/{{5}}
-            ]
-          }]
-        }
-      });
-      // Añadimos un mensaje con el link del panel (por si la plantilla no lo incluye)
-      await enviarTexto(ADMIN_PHONE, `Responder desde el bot: ${replyLink}`);
-      return;
-    } catch (e) {
-      console.error("ADMIN TEMPLATE ERR:", e.message);
-      // cae a texto
-    }
+              {
+                // aquí incluimos también el link del panel para responder desde el BOT
+                type: "text",
+                text: `${mensaje || "(sin mensaje)"}${replyLink ? `\nResponder desde el bot: ${replyLink}` : ""}`,
+              },
+              { type: "text", text: clienteNumeroSinPlus }, // para https://wa.me/{{5}} en tu plantilla
+            ],
+          },
+        ],
+      },
+    });
+    // Importante: NO mandamos un segundo mensaje de texto, así evitamos el error (#10)
+  } catch (e) {
+    console.error("ADMIN TEMPLATE ERR:", e.message);
   }
-
-  // 2) fallback: texto simple (requiere ventana 24h)
-  const txt =
-    `🔔 *Nuevo contacto para ${BOT_NAME}*\n` +
-    `Nombre: ${clienteNombre || "Cliente"}\n` +
-    `Número: +${clienteNumeroSinPlus}\n` +
-    `Mensaje: ${mensaje || "(sin mensaje)"}\n` +
-    (replyLink ? `Responder desde el bot: ${replyLink}` : `Abrir chat: https://wa.me/${clienteNumeroSinPlus}`);
-  await enviarTexto(ADMIN_PHONE, txt);
 }
 
-// ===== Anti-duplicados =====
+// ===== Anti-duplicados (reintentos Meta) =====
 const processed = new Set();
 function yaProcesado(id) {
   if (!id) return false;
@@ -241,7 +237,7 @@ app.post("/webhook", async (req, res) => {
     const msgId = msg.id;
     if (yaProcesado(msgId)) return;
 
-    const from = msg.from; // número del cliente (sin "+")
+    const from = msg.from; // número del cliente (sin +)
     const texto = msg.text?.body || "";
     const clienteNombre = value?.contacts?.[0]?.profile?.name || "";
     const intent = detectarIntent(texto);
@@ -267,9 +263,17 @@ app.post("/webhook", async (req, res) => {
       );
     if (intent === "menu_fichas") return enviarTexto(from, menuFichas());
     if (intent === "ficha_khumic")
-      return enviarDocumentoPorId(from, { mediaId: KHUMIC_PDF_ID, filename: "Khumic-100-ficha.pdf", caption: "📄 Ficha técnica de Khumic-100 (ácidos húmicos + fúlvicos)." });
+      return enviarDocumentoPorId(from, {
+        mediaId: KHUMIC_PDF_ID,
+        filename: "Khumic-100-ficha.pdf",
+        caption: "📄 Ficha técnica de Khumic-100 (ácidos húmicos + fúlvicos).",
+      });
     if (intent === "ficha_seaweed")
-      return enviarDocumentoPorId(from, { mediaId: SEAWEED_PDF_ID, filename: "Seaweed-800-ficha.pdf", caption: "📄 Ficha técnica de Khumic – Seaweed 800 (algas marinas)." });
+      return enviarDocumentoPorId(from, {
+        mediaId: SEAWEED_PDF_ID,
+        filename: "Seaweed-800-ficha.pdf",
+        caption: "📄 Ficha técnica de Khumic – Seaweed 800 (algas marinas).",
+      });
 
     if (intent === "asesor") {
       const msj = enHorario
@@ -292,7 +296,7 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-// ===== Panel del admin: responder desde el número del BOT =====
+// ===== Panel admin: responder desde el número del BOT =====
 app.get("/admin/reply", (req, res) => {
   const { to, name, t } = req.query;
   if (!ADMIN_SECRET || t !== ADMIN_SECRET) return res.status(403).send("Forbidden");
@@ -321,11 +325,16 @@ app.post("/admin/reply", async (req, res) => {
   if (!to || !message) return res.status(400).send("Faltan datos");
   try {
     await enviarTexto(to, message);
-    res.status(200).send("<p>✅ Enviado. Cierra esta pestaña.</p>");
+    res.status(200).send("<p>✅ Enviado. Puedes cerrar esta pestaña.</p>");
   } catch (e) {
     res.status(500).send(`<pre>Error: ${String(e)}</pre>`);
   }
 });
+
+// Healthcheck
+app.get("/", (_req, res) => res.send("OK"));
+app.listen(PORT, () => console.log(`Bot listo en puerto ${PORT}`));
+
 
 // Healthcheck
 app.get("/", (_req, res) => res.send("OK"));
