@@ -5,7 +5,7 @@ const app = express();
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true })); // para formularios del panel
 
-// === ENV: usa exactamente los nombres de Render ===
+// === ENV: usa exactamente los nombres que tienes en Render ===
 const {
   PORT = 3000,
   WHATSAPP_VERIFY_TOKEN,
@@ -15,10 +15,11 @@ const {
   SEAWEED_PDF_ID,
   TZ = "America/Guayaquil",
   BOT_NAME = "PRO CAMPO BOT",
-  ADMIN_PHONE,                     // 5939XXXXXXXX (sin +)
-  ADMIN_TEMPLATE = "lead_alert",   // nombre de la plantilla aprobada
-  ADMIN_PANEL_URL,                 // https://tu-app.onrender.com
-  ADMIN_SECRET,                    // clave simple para proteger el panel
+  ADMIN_PHONE,                      // 5939XXXXXXXX (sin +)
+  ADMIN_TEMPLATE = "hello_world",   // p.ej. "hello_world" para test o "lead_alert_util" cuando esté aprobada
+  ADMIN_TEMPLATE_LANG = "es",       // "es" (Spanish) o "es_EC" (Spanish ECU)
+  ADMIN_PANEL_URL,                  // https://tu-app.onrender.com
+  ADMIN_SECRET,                     // clave simple para proteger el panel
 } = process.env;
 
 // ===== Textos de precios (fijos) =====
@@ -53,6 +54,7 @@ Escribe *asesor* para comprar o *ficha seaweed* para la ficha técnica.`;
     BOT_NAME,
     ADMIN_PHONE,
     ADMIN_TEMPLATE,
+    ADMIN_TEMPLATE_LANG,
     ADMIN_PANEL_URL,
     ADMIN_SECRET: ADMIN_SECRET ? "SET" : "MISSING",
   });
@@ -162,44 +164,46 @@ async function enviarDocumentoPorId(to, { mediaId, filename, caption }) {
   }
 }
 
-// ===== Notificación al ADMIN por PLANTILLA (con link del panel) =====
+// ===== Notificación al ADMIN por PLANTILLA =====
+// - Si ADMIN_TEMPLATE === "hello_world": se envía SIN parámetros (no tiene variables).
+// - Si usas "lead_alert_util" (o similar aprobado con 5 variables), se envía CON parámetros.
 async function notificarAdmin({ clienteNombre, clienteNumeroSinPlus, mensaje }) {
   if (!ADMIN_PHONE) {
     console.warn("ADMIN_PHONE no definido. No se enviará notificación.");
     return;
   }
-  try {
-    const replyLink =
-      ADMIN_PANEL_URL && ADMIN_SECRET
-        ? `${ADMIN_PANEL_URL}/admin/reply?to=${encodeURIComponent(clienteNumeroSinPlus)}&name=${encodeURIComponent(clienteNombre || "Cliente")}&t=${encodeURIComponent(ADMIN_SECRET)}`
-        : "";
 
+  const replyLink =
+    ADMIN_PANEL_URL && ADMIN_SECRET
+      ? `${ADMIN_PANEL_URL}/admin/reply?to=${encodeURIComponent(clienteNumeroSinPlus)}&name=${encodeURIComponent(clienteNombre || "Cliente")}&t=${encodeURIComponent(ADMIN_SECRET)}`
+      : "";
+
+  const templatePayload = {
+    name: ADMIN_TEMPLATE,
+    language: { code: ADMIN_TEMPLATE_LANG }, // "es" o "es_EC"
+  };
+
+  // Solo añadimos variables si la plantilla las tiene (no para hello_world)
+  if (ADMIN_TEMPLATE !== "hello_world") {
+    templatePayload.components = [{
+      type: "body",
+      parameters: [
+        { type: "text", text: BOT_NAME },
+        { type: "text", text: clienteNombre || "Cliente" },
+        { type: "text", text: `+${clienteNumeroSinPlus}` },
+        { type: "text", text: `${mensaje || "(sin mensaje)"}${replyLink ? `\nResponder desde el bot: ${replyLink}` : ""}` },
+        { type: "text", text: clienteNumeroSinPlus },
+      ]
+    }];
+  }
+
+  try {
     await waFetch("messages", {
       messaging_product: "whatsapp",
       to: ADMIN_PHONE, // 5939XXXXXXXX (sin +)
       type: "template",
-      template: {
-        name: ADMIN_TEMPLATE, // p.ej. lead_alert
-        language: { code: "es" },
-        components: [
-          {
-            type: "body",
-            parameters: [
-              { type: "text", text: BOT_NAME },
-              { type: "text", text: clienteNombre || "Cliente" },
-              { type: "text", text: `+${clienteNumeroSinPlus}` },
-              {
-                // aquí incluimos también el link del panel para responder desde el BOT
-                type: "text",
-                text: `${mensaje || "(sin mensaje)"}${replyLink ? `\nResponder desde el bot: ${replyLink}` : ""}`,
-              },
-              { type: "text", text: clienteNumeroSinPlus }, // para https://wa.me/{{5}} en tu plantilla
-            ],
-          },
-        ],
-      },
+      template: templatePayload,
     });
-    // Importante: NO mandamos un segundo mensaje de texto, así evitamos el error (#10)
   } catch (e) {
     console.error("ADMIN TEMPLATE ERR:", e.message);
   }
@@ -330,11 +334,6 @@ app.post("/admin/reply", async (req, res) => {
     res.status(500).send(`<pre>Error: ${String(e)}</pre>`);
   }
 });
-
-// Healthcheck
-app.get("/", (_req, res) => res.send("OK"));
-app.listen(PORT, () => console.log(`Bot listo en puerto ${PORT}`));
-
 
 // Healthcheck
 app.get("/", (_req, res) => res.send("OK"));
