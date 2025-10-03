@@ -1,4 +1,4 @@
-// index.js — Pro Campo Bot (menú + precios + fichas + "responder como bot" con comandos)
+// index.js — Pro Campo Bot (menú + precios + fichas + notificación admin por plantilla + comandos r)
 import express from "express";
 
 const app = express();
@@ -13,7 +13,9 @@ const {
   SEAWEED_PDF_ID,
   TZ = "America/Guayaquil",
   BOT_NAME = "PRO CAMPO BOT",
-  ADMIN_PHONE, // 5939XXXXXXXX (sin +)
+  ADMIN_PHONE,                      // 5939XXXXXXXX (sin +)
+  ADMIN_TEMPLATE = "hello_world",   // plantilla para avisar al admin
+  ADMIN_TEMPLATE_LANG = "en_US",    // hello_world es en inglés
 } = process.env;
 
 /* =================== Utilidades =================== */
@@ -27,13 +29,13 @@ function normalizarTexto(t = "") {
     .trim();
 }
 
-// Convierte teléfonos a E.164 sin "+". Soporta Ecuador (09xxxxxxxx -> 5939xxxxxxxx).
+// Convierte teléfonos a E.164 sin "+". Ecuador: 09xxxxxxxx -> 5939xxxxxxxx.
 function toE164NoPlus(input = "") {
   let d = (input || "").replace(/\D/g, "");
   if (!d) return null;
   if (d.startsWith("0") && d.length === 10 && d[1] === "9") d = "593" + d.slice(1);
   if (d.startsWith("593") && d.length === 12) return d;
-  if (/^\d{8,15}$/.test(d)) return d; // acepta otros E.164 ya correctos
+  if (/^\d{8,15}$/.test(d)) return d;
   return null;
 }
 
@@ -129,7 +131,46 @@ async function enviarDocumentoPorId(to, { mediaId, filename, caption }) {
   }
 }
 
-/* =================== Estado de "leads" y comandos admin =================== */
+/* =================== Notificación al admin (PLANTILLA) =================== */
+// Usa plantilla (por defecto hello_world, lang en_US) para que SIEMPRE entregue al admin.
+// Si falla plantilla (p.ej. admin no está en allowlist en modo developer), intenta texto.
+async function notificarAdminPorPlantilla({ clienteNombre, clienteNumeroSinPlus, mensaje }) {
+  if (!ADMIN_PHONE) return;
+
+  try {
+    await waFetch("messages", {
+      messaging_product: "whatsapp",
+      to: ADMIN_PHONE, // 5939XXXXXXXX (sin +)
+      type: "template",
+      template: {
+        name: ADMIN_TEMPLATE,              // hello_world para test
+        language: { code: ADMIN_TEMPLATE_LANG }, // en_US para hello_world
+        // hello_world NO lleva variables → sin components
+      },
+    });
+    return true;
+  } catch (e) {
+    console.error("ADMIN TEMPLATE ERR:", e.message);
+    try {
+      const aviso =
+`🔔 Nuevo lead para ${BOT_NAME}
+Nombre: ${clienteNombre || "Cliente"}
+Número: +${clienteNumeroSinPlus}
+Mensaje: ${mensaje || "(sin mensaje)"}
+
+👉 Responde usando comandos:
+• *r ${clienteNumeroSinPlus} | Hola, te atiendo…*
+• *leads* (ver últimos) / *who* (ver destino)`;
+      await enviarTexto(ADMIN_PHONE, aviso);
+      return true;
+    } catch (e2) {
+      console.error("ADMIN TEXT ERR:", e2.message);
+      return false;
+    }
+  }
+}
+
+/* =================== Estado de leads + comandos admin =================== */
 const processed = new Set();
 const recentLeads = []; // {num, name, at}
 const adminCtx = { currentTo: null, currentName: null };
@@ -159,11 +200,11 @@ function adminHelp() {
 ${who}
 
 • *r Mensaje...*  → responde al DESTINO ACTUAL.
-• *r 5939XXXXXXXX | Mensaje...* → responde al número indicado (fija como destino).
+• *r 5939XXXXXXXX | Mensaje...* → fija destino y envía.
 • *rto 5939XXXXXXXX* → fija el destino actual sin enviar.
 • *who* → muestra el destino actual.
 • *leads* → últimos 5 leads.
-• *use N* → fija el destino al lead N de la lista.
+• *use N* → fija el destino al lead N.
 
 Ejemplo:  *r Hola, te escribo como Pro Campo Bot 👋*`
   );
@@ -209,11 +250,11 @@ app.post("/webhook", async (req, res) => {
     const msgId = msg.id;
     if (yaProcesado(msgId)) return;
 
-    const from = msg.from; // número del remitente (sin +)
+    const from = msg.from; // número del cliente (sin +)
     const texto = msg.text?.body || "";
     const name  = value?.contacts?.[0]?.profile?.name || "Cliente";
 
-    // === Modo ADMIN: comandos dentro del mismo chat ===
+    // === ADMIN: comandos en su propio chat con el bot ===
     if (ADMIN_PHONE && from === ADMIN_PHONE) {
       const t = texto.trim();
 
@@ -272,7 +313,6 @@ app.post("/webhook", async (req, res) => {
         return enviarTexto(from, `✅ Enviado a ${adminCtx.currentTo}`);
       }
 
-      // cualquier otra cosa: mostrar ayuda
       return enviarTexto(from, adminHelp());
     }
 
@@ -310,23 +350,15 @@ app.post("/webhook", async (req, res) => {
         : "Gracias por escribir. Un asesor te contactará en horario laboral. Puedo ayudarte por aquí mientras tanto. 🕗";
       await enviarTexto(from, msj);
 
-      // Guarda este lead como "destino actual" para el admin
+      // Registrar lead
       pushLead(from, name);
 
-      // Intento de aviso al admin por TEXTO (requiere que el admin haya abierto chat con el bot en últimas 24h)
-      if (ADMIN_PHONE) {
-        const aviso =
-`🔔 Nuevo lead para ${BOT_NAME}
-Nombre: ${name}
-Número: +${from}
-Mensaje: ${texto}
-
-👉 Para responder aquí mismo:
-• *r ${from} | Hola, soy de Pro Campo Bot...*  (fija destino y envía)
-• o escribe *r Hola...* (si ya hay destino actual)
-• *leads* (ver últimos) / *who* (ver destino)`;
-        await enviarTexto(ADMIN_PHONE, aviso);
-      }
+      // Aviso al admin por PLANTILLA (hello_world). Si falla, intenta texto.
+      await notificarAdminPorPlantilla({
+        clienteNombre: name,
+        clienteNumeroSinPlus: from,
+        mensaje: texto,
+      });
       return;
     }
 
@@ -346,7 +378,8 @@ console.log("ENV CHECK:", {
   PHONE_NUMBER_ID,
   KHUMIC_PDF_ID,
   SEAWEED_PDF_ID,
-  TZ, BOT_NAME, ADMIN_PHONE,
+  TZ, BOT_NAME, ADMIN_PHONE, ADMIN_TEMPLATE, ADMIN_TEMPLATE_LANG
 });
 
 app.listen(PORT, () => console.log(`Bot listo en puerto ${PORT}`));
+
