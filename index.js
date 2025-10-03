@@ -1,10 +1,9 @@
-// index.js — Pro Campo Bot (simple: menú + fichas + alerta corta al admin + respuesta 'r')
+// index.js — Pro Campo Bot (simple + tickets cortos + chat activo sin escribir ticket cada vez)
 import express from "express";
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
-// ====== ENV ======
 const {
   PORT = 3000,
   WHATSAPP_VERIFY_TOKEN,
@@ -14,15 +13,10 @@ const {
   SEAWEED_PDF_ID,
   TZ = "America/Guayaquil",
   BOT_NAME = "PRO CAMPO BOT",
-
-  // Admin (tu número personal, sin "+", p.ej. 5939XXXXXXXX)
-  ADMIN_PHONE,
-
-  // Plantilla sólo para abrir conversación si se necesita
-  ADMIN_TEMPLATE = "hello_world",
-  ADMIN_TEMPLATE_LANG = "en_US",
+  ADMIN_PHONE, // 5939XXXXXXXX (sin +)
 } = process.env;
 
+/* =================== Utils =================== */
 const mask = s => (s ? s.slice(0, 4) + "***" : "MISSING");
 console.log("ENV CHECK:", {
   VERIFY: !!WHATSAPP_VERIFY_TOKEN,
@@ -30,25 +24,25 @@ console.log("ENV CHECK:", {
   PHONE_NUMBER_ID,
   KHUMIC_PDF_ID,
   SEAWEED_PDF_ID,
-  TZ, BOT_NAME, ADMIN_PHONE, ADMIN_TEMPLATE, ADMIN_TEMPLATE_LANG,
+  TZ, BOT_NAME, ADMIN_PHONE
 });
 
-// ====== Utils ======
 function normalizar(t = "") {
   return (t || "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "").trim();
 }
 function esHorarioLaboral(date = new Date()) {
   const f = new Intl.DateTimeFormat("en-US", {
-    timeZone: TZ, hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+    timeZone: TZ, hour12: false, year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit",
   }).format(date);
   const d = new Date(f);
-  const w = d.getDay();                // 0=Dom..6=Sáb
-  const m = d.getHours() * 60 + d.getMinutes();
-  return (w >= 1 && w <= 5 && m >= 480 && m <= 1050) || (w === 6 && m >= 480 && m <= 780);
+  const w = d.getDay();                         // 0=Dom..6=Sáb
+  const m = d.getHours() * 60 + d.getMinutes(); // minutos
+  const LV = (w >= 1 && w <= 5) && (m >= 8*60 && m <= 17*60+30);
+  const SA = (w === 6) && (m >= 8*60 && m <= 13*60);
+  return LV || SA;
 }
 const processed = new Set();
-const lastLead = { to: null, name: null };
-
 function yaProcesado(id) {
   if (!id) return false;
   if (processed.has(id)) return true;
@@ -57,14 +51,14 @@ function yaProcesado(id) {
   return false;
 }
 
-// Tag corto tipo #ABC123 a partir del id del mensaje
-function shortTag(str = "") {
+// Ticket corto tipo #MABDE3
+function shortTicket(seed = "") {
   let h = 0;
-  for (const c of str) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return h.toString(36).slice(-6).toUpperCase();
+  for (const c of seed) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return h.toString(36).slice(-6).toUpperCase(); // 4–6 chars
 }
 
-// ====== WhatsApp helpers ======
+/* =================== WA helpers =================== */
 async function waFetch(path, payload) {
   const url = `https://graph.facebook.com/v20.0/${PHONE_NUMBER_ID}/${path}`;
   const r = await fetch(url, {
@@ -76,48 +70,84 @@ async function waFetch(path, payload) {
   return r.json();
 }
 async function enviarTexto(to, body) {
-  await waFetch("messages", { messaging_product: "whatsapp", to, type: "text", text: { body } });
+  try {
+    await waFetch("messages", { messaging_product: "whatsapp", to, type: "text", text: { body } });
+    return true;
+  } catch (e) {
+    console.error("WA TEXT ERR:", e.message);
+    // Si falla (p.ej. ventana 24 h cerrada) avisamos al admin
+    if (ADMIN_PHONE && to !== ADMIN_PHONE) {
+      try { await waFetch("messages", {
+        messaging_product: "whatsapp",
+        to: ADMIN_PHONE,
+        type: "text",
+        text: { body: "⚠️ No se pudo entregar el mensaje (ventana 24 h cerrada)." }
+      }); } catch {}
+    }
+    return false;
+  }
 }
 async function enviarDocumentoPorId(to, { mediaId, filename, caption }) {
   if (!mediaId) return enviarTexto(to, "No encuentro la ficha ahora. Intenta en unos minutos 🙏");
-  await waFetch("messages", {
-    messaging_product: "whatsapp",
-    to, type: "document",
-    document: { id: mediaId, filename, caption },
-  });
-}
-
-// ====== Notificación simple al admin (con fallback a plantilla) ======
-async function notificarAdminSimple({ from, text, tag }) {
-  if (!ADMIN_PHONE) return;
-
-  const body = `Cliente +${from} (#${tag}):\n"${text || "(sin mensaje)"}"`;
-
   try {
-    await enviarTexto(ADMIN_PHONE, body);       // 1) intento directo (simple)
+    await waFetch("messages", {
+      messaging_product: "whatsapp",
+      to, type: "document",
+      document: { id: mediaId, filename, caption },
+    });
   } catch (e) {
-    const s = (e.message || "").toLowerCase();
-    const ventanaCerrada = s.includes("24") || s.includes('"code":131026') || s.includes('"code":470');
-    if (!ventanaCerrada) {
-      console.error("ADMIN TEXT ERR:", e.message);
-      return;
-    }
-    // 2) abre conversación con plantilla y luego envía el texto
-    try {
-      await waFetch("messages", {
-        messaging_product: "whatsapp",
-        to: ADMIN_PHONE,
-        type: "template",
-        template: { name: ADMIN_TEMPLATE, language: { code: ADMIN_TEMPLATE_LANG } },
-      });
-      await enviarTexto(ADMIN_PHONE, body);
-    } catch (e2) {
-      console.error("ADMIN TEMPLATE/TEXT ERR:", e2.message);
-    }
+    console.error("WA DOC ERR:", e.message);
   }
 }
 
-// ====== Textos ======
+/* =================== Tickets & Chat =================== */
+// ticketId -> { num, name }
+const tickets = new Map();
+// num -> ticketId
+const byNumber = new Map();
+// últimos tickets (para listar)
+const recent = []; // [{ticket, name}]
+const adminCtx = { activeTicket: null }; // ticket id activo para chatear
+
+function ensureTicket(num, name, seedForId) {
+  let ticket = byNumber.get(num);
+  if (!ticket) {
+    ticket = shortTicket(seedForId || num);
+    // evitar colisión rara
+    let iter = 0;
+    while (tickets.has(ticket)) { ticket = shortTicket(ticket + (++iter)); }
+    tickets.set(ticket, { num, name: name || "Cliente" });
+    byNumber.set(num, ticket);
+    recent.unshift({ ticket, name: name || "Cliente" });
+    if (recent.length > 10) recent.pop();
+  } else {
+    // actualizar nombre si llega mejor uno
+    const t = tickets.get(ticket);
+    if (name && t && !t.name) t.name = name;
+  }
+  return ticket;
+}
+
+function adminHelp() {
+  const active = adminCtx.activeTicket
+    ? `🎯 Ticket activo: #${adminCtx.activeTicket} • Cliente: ${tickets.get(adminCtx.activeTicket)?.name}`
+    : "🎯 Ticket activo: (ninguno)";
+  const lista = recent.slice(0, 5).map((x,i)=>`${i+1}) #${x.ticket} — ${x.name}`).join("\n") || "(vacío)";
+  return (
+`${active}
+
+Comandos:
+• *use #ABC123*  → activar ticket por código
+• *use 1*        → activar ticket por índice de la lista
+• *leads*        → ver últimos tickets
+• *who*          → ver ticket activo
+• *stop*         → desactivar chat
+
+Con ticket activo, *solo escribe* y tu mensaje se envía al cliente.`
+  );
+}
+
+/* =================== Textos del bot =================== */
 const MSG_PRECIOS_KHUMIC =
 `💰 *Precios y promociones de Khumic-100*
 • *1 kg:* $13.96
@@ -134,9 +164,9 @@ const MSG_PRECIOS_SEAWEED =
 • *Promo 3 kg (incluye envío):* $39.68
 
 📦 Envíos a todo Ecuador.
-Escribe *asesor* para comprar o *ficha seaweed* para la ficha técnica.`;
+Escribe *ficha seaweed* para la ficha técnica o *asesor* para atención.`;
 
-// ====== Menú ======
+/* =================== Menú / intents =================== */
 function menuPrincipal(enHorario) {
   const saludo =
     `🤖🌱 *¡Hola! Soy ${BOT_NAME.toUpperCase()}* y estoy aquí para ayudarte.\n` +
@@ -155,10 +185,9 @@ function menuPrincipal(enHorario) {
     "0) Volver al inicio"
   );
 }
-const menuFichas = () =>
-  "📑 *Fichas técnicas disponibles*\nEscribe:\n\n• *ficha 100* → Khumic-100\n• *ficha seaweed* → Seaweed 800";
+const menuFichas =
+  () => "📑 *Fichas técnicas disponibles*\nEscribe:\n\n• *ficha 100* → Khumic-100\n• *ficha seaweed* → Seaweed 800";
 
-// ====== Intents ======
 function detectarIntent(texto) {
   const t = normalizar(texto);
   if (/^(hola|buen[oa]s?|menu|men[uú]|inicio|start|0)$/i.test(t)) return "inicio";
@@ -176,7 +205,7 @@ function detectarIntent(texto) {
   return "fallback";
 }
 
-// ====== Webhook verify ======
+/* =================== Webhook verify (GET) =================== */
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
@@ -185,7 +214,7 @@ app.get("/webhook", (req, res) => {
   res.sendStatus(403);
 });
 
-// ====== Webhook receive ======
+/* =================== Webhook receive (POST) =================== */
 app.post("/webhook", async (req, res) => {
   res.sendStatus(200);
   try {
@@ -200,33 +229,67 @@ app.post("/webhook", async (req, res) => {
     const texto = msg.text?.body || "";
     const name  = value?.contacts?.[0]?.profile?.name || "Cliente";
 
-    // === Comandos simples del admin en su chat con el bot ===
+    // ===== ADMIN CHAT =====
     if (ADMIN_PHONE && from === ADMIN_PHONE) {
       const t = texto.trim();
 
-      // r 5939... | mensaje
-      let m = t.match(/^r\s+(\+?\d[\d\s-]+)\s*\|\s*([\s\S]+)$/i);
+      // use #ABC123
+      let m = t.match(/^use\s+#([A-Z0-9]{4,8})$/i);
       if (m) {
-        const num = (m[1] || "").replace(/\D/g, "");
-        const body = m[2].trim();
-        if (!/^\d{8,15}$/.test(num)) return enviarTexto(from, "❌ Número inválido. Usa 5939XXXXXXXX.");
-        lastLead.to = num; lastLead.name = "Cliente";
-        await enviarTexto(num, body);
-        return enviarTexto(from, `✅ Enviado a ${num}`);
+        const tk = m[1].toUpperCase();
+        if (!tickets.has(tk)) return enviarTexto(from, `No encuentro #${tk}. Usa *leads*.`);
+        adminCtx.activeTicket = tk;
+        const { name } = tickets.get(tk);
+        return enviarTexto(from, `✅ Chat activado con #${tk} — ${name}. Escribe tu mensaje.`);
       }
 
-      // r Mensaje... (usa el último lead)
-      m = t.match(/^r\s+([\s\S]+)$/i);
+      // use N
+      m = t.match(/^use\s+(\d{1,2})$/i);
       if (m) {
-        if (!lastLead.to) return enviarTexto(from, "No hay destino. Usa: r 5939XXXXXXXX | Mensaje");
-        await enviarTexto(lastLead.to, m[1].trim());
-        return enviarTexto(from, `✅ Enviado a ${lastLead.to}`);
+        const idx = parseInt(m[1], 10) - 1;
+        const item = recent[idx];
+        if (!item) return enviarTexto(from, "Índice inválido. Usa *leads*.");
+        adminCtx.activeTicket = item.ticket;
+        return enviarTexto(from, `✅ Chat activado con #${item.ticket} — ${item.name}.`);
       }
 
-      return enviarTexto(from, "Comandos:\n• r 5939XXXXXXXX | Mensaje\n• r Mensaje (al último lead)");
+      if (/^leads?$/i.test(t)) {
+        const list = recent.slice(0, 5).map((x,i)=>`${i+1}) #${x.ticket} — ${x.name}`).join("\n") || "(vacío)";
+        return enviarTexto(from, `📒 Últimos tickets:\n${list}\n\nUsa *use #ABC123* o *use 1*`);
+      }
+
+      if (/^who$/i.test(t)) {
+        if (!adminCtx.activeTicket) return enviarTexto(from, "No hay ticket activo. Usa *leads* / *use #ID*.");
+        const tk = adminCtx.activeTicket;
+        const { name } = tickets.get(tk) || {};
+        return enviarTexto(from, `🎯 Ticket activo: #${tk} — ${name}`);
+      }
+
+      if (/^stop$/i.test(t)) {
+        adminCtx.activeTicket = null;
+        return enviarTexto(from, "✋ Chat desactivado.");
+      }
+
+      // Con ticket activo: cualquier texto se reenvía al cliente
+      if (adminCtx.activeTicket) {
+        const tk = adminCtx.activeTicket;
+        const { num, name } = tickets.get(tk) || {};
+        if (!num) return enviarTexto(from, "Ticket inválido. Usa *leads* / *use #ID*.");
+        await enviarTexto(num, t);
+        return; // también podríamos eco al admin, pero no es necesario
+      }
+
+      // Sin ticket activo: mostrar ayuda
+      return enviarTexto(from, adminHelp());
     }
 
-    // === Cliente normal ===
+    // ===== CLIENTE → reenviar al admin si ese ticket está activo =====
+    const ticketId = ensureTicket(from, name, msg.id || from);
+    if (ADMIN_PHONE && adminCtx.activeTicket === ticketId) {
+      await enviarTexto(ADMIN_PHONE, `[#${ticketId}] ${name}: ${texto}`);
+    }
+
+    // ===== Flujo normal del bot =====
     const intent = detectarIntent(texto);
     const enHorario = esHorarioLaboral();
 
@@ -251,10 +314,17 @@ app.post("/webhook", async (req, res) => {
         : "Gracias por escribir. Un asesor te contactará en horario laboral. Puedo ayudarte por aquí mientras tanto. 🕗";
       await enviarTexto(from, msj);
 
-      // Guarda como último lead y notifica
-      lastLead.to = from; lastLead.name = name;
-      const tag = shortTag(msg.id || from);
-      await notificarAdminSimple({ from, text: texto, tag });
+      // Crear/asegurar ticket y activarlo para el admin
+      const tk = ensureTicket(from, name, msg.id || from);
+      adminCtx.activeTicket = tk;
+
+      // Aviso corto al admin (SIN hello_world)
+      if (ADMIN_PHONE) {
+        await enviarTexto(
+          ADMIN_PHONE,
+          `🟢 Chat activado #${tk}\nCliente: ${name}\nEscribe tu mensaje aquí para responder.`
+        );
+      }
       return;
     }
 
@@ -265,6 +335,7 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-// ====== Healthcheck ======
+/* =================== Healthcheck =================== */
 app.get("/", (_req, res) => res.send("OK"));
 app.listen(PORT, () => console.log(`Bot listo en puerto ${PORT}`));
+
