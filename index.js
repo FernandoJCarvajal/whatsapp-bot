@@ -1,4 +1,4 @@
-// index.js — Pro Campo Bot (menú + precios + fichas + notificación admin por plantilla + comandos r)
+// index.js — Pro Campo Bot (menú + precios + fichas + notificación admin por plantilla + MODO CHAT + comandos)
 import express from "express";
 
 const app = express();
@@ -13,9 +13,12 @@ const {
   SEAWEED_PDF_ID,
   TZ = "America/Guayaquil",
   BOT_NAME = "PRO CAMPO BOT",
-  ADMIN_PHONE,                      // 5939XXXXXXXX (sin +)
-  ADMIN_TEMPLATE = "hello_world",   // plantilla para avisar al admin
-  ADMIN_TEMPLATE_LANG = "en_US",    // hello_world es en inglés
+  ADMIN_PHONE,                       // 5939XXXXXXXX (sin +)
+  ADMIN_TEMPLATE = "hello_world",    // plantilla para avisar al admin
+  ADMIN_TEMPLATE_LANG = "en_US",     // hello_world es en inglés
+  // Fallback opcional para cliente fuera de 24h (si creas esta plantilla)
+  CUSTOMER_TEMPLATE = "agent_reply",
+  CUSTOMER_TEMPLATE_LANG = "es",
 } = process.env;
 
 /* =================== Utilidades =================== */
@@ -72,29 +75,6 @@ const MSG_PRECIOS_SEAWEED =
 📦 Envíos a todo Ecuador.
 Escribe *asesor* para comprar o *ficha seaweed* para la ficha técnica.`;
 
-function menuPrincipal(enHorario) {
-  const saludo =
-    `🤖🌱 *¡Hola! Soy ${BOT_NAME.toUpperCase()}* y estoy aquí para ayudarte.\n` +
-    "Elige una opción escribiendo el número:\n\n";
-  const nota = enHorario ? "" :
-    "_Fuera de horario: puedo darte información y dejamos la *compra* para el horario laboral (L–V 08:00–17:30, Sáb 08:00–13:00)._ \n\n";
-  return (
-    saludo + nota +
-    "1) Precios y promociones de *Khumic-100* (ácidos húmicos + fúlvicos)\n" +
-    "2) Precios y promociones de *Khumic – Seaweed 800* (algas marinas)\n" +
-    "3) Beneficios de *Khumic-100* (ácidos húmicos + fúlvicos)\n" +
-    "4) Beneficios de *Khumic – Seaweed 800* (algas marinas)\n" +
-    "5) Envíos y cómo encontrarnos\n" +
-    "6) *Fichas técnicas (PDF)*\n" +
-    "7) Hablar con un asesor 👨‍💼\n" +
-    "0) Volver al inicio"
-  );
-}
-
-function menuFichas() {
-  return "📑 *Fichas técnicas disponibles*\nEscribe:\n\n• *ficha 100* → Khumic-100\n• *ficha seaweed* → Seaweed 800";
-}
-
 /* =================== WhatsApp helpers =================== */
 async function waFetch(path, payload) {
   const url = `https://graph.facebook.com/v20.0/${PHONE_NUMBER_ID}/${path}`;
@@ -108,72 +88,89 @@ async function waFetch(path, payload) {
 }
 
 async function enviarTexto(to, body) {
-  try {
-    await waFetch("messages", { messaging_product: "whatsapp", to, type: "text", text: { body } });
-  } catch (e) {
-    console.error("WA TEXT ERR:", e.message);
-  }
+  await waFetch("messages", { messaging_product: "whatsapp", to, type: "text", text: { body } });
 }
 
 async function enviarDocumentoPorId(to, { mediaId, filename, caption }) {
   if (!mediaId) {
-    console.error("MEDIA_ID vacío:", filename);
-    return enviarTexto(to, "No encuentro la ficha ahora. Intenta en unos minutos 🙏");
+    await enviarTexto(to, "No encuentro la ficha ahora. Intenta en unos minutos 🙏");
+    return;
   }
+  await waFetch("messages", {
+    messaging_product: "whatsapp",
+    to, type: "document",
+    document: { id: mediaId, filename, caption },
+  });
+}
+
+/* ===== Texto con fallback a plantilla (si ventana 24h cerrada) ===== */
+async function enviarTemplateCliente(to, nombreCliente, texto) {
   try {
     await waFetch("messages", {
       messaging_product: "whatsapp",
-      to, type: "document",
-      document: { id: mediaId, filename, caption },
+      to,
+      type: "template",
+      template: {
+        name: CUSTOMER_TEMPLATE,
+        language: { code: CUSTOMER_TEMPLATE_LANG }, // "es" o "es_EC"
+        components: [{
+          type: "body",
+          parameters: [
+            { type: "text", text: nombreCliente || "Cliente" }, // {{1}}
+            { type: "text", text: BOT_NAME },                   // {{2}}
+            { type: "text", text: texto || "" },                // {{3}}
+          ],
+        }],
+      },
     });
+    return true;
   } catch (e) {
-    console.error("WA DOC ERR:", e.message);
+    console.error("TEMPLATE Cliente ERR:", e.message);
+    return false;
+  }
+}
+
+async function enviarTextoConFallback(to, body, nombreCliente) {
+  try {
+    await enviarTexto(to, body);
+    return true;
+  } catch (e) {
+    const s = (e.message || "").toLowerCase();
+    const esVentanaCerrada =
+      s.includes("24 hour") || s.includes("24-hour") ||
+      s.includes("24 horas") || s.includes("outside the 24") ||
+      s.includes('"code":131026') || s.includes('"code":470');
+    if (esVentanaCerrada) {
+      console.warn("Ventana 24h cerrada → usando plantilla:", CUSTOMER_TEMPLATE);
+      return await enviarTemplateCliente(to, nombreCliente, body);
+    }
+    console.error("WA TEXT ERR:", e.message);
+    return false;
   }
 }
 
 /* =================== Notificación al admin (PLANTILLA) =================== */
-// Usa plantilla (por defecto hello_world, lang en_US) para que SIEMPRE entregue al admin.
-// Si falla plantilla (p.ej. admin no está en allowlist en modo developer), intenta texto.
-async function notificarAdminPorPlantilla({ clienteNombre, clienteNumeroSinPlus, mensaje }) {
-  if (!ADMIN_PHONE) return;
-
+// Siempre por plantilla (hello_world) para que llegue aunque no haya ventana abierta.
+async function notificarAdminPorPlantilla() {
+  if (!ADMIN_PHONE) return false;
   try {
     await waFetch("messages", {
       messaging_product: "whatsapp",
       to: ADMIN_PHONE, // 5939XXXXXXXX (sin +)
       type: "template",
-      template: {
-        name: ADMIN_TEMPLATE,              // hello_world para test
-        language: { code: ADMIN_TEMPLATE_LANG }, // en_US para hello_world
-        // hello_world NO lleva variables → sin components
-      },
+      template: { name: ADMIN_TEMPLATE, language: { code: ADMIN_TEMPLATE_LANG } },
     });
     return true;
   } catch (e) {
     console.error("ADMIN TEMPLATE ERR:", e.message);
-    try {
-      const aviso =
-`🔔 Nuevo lead para ${BOT_NAME}
-Nombre: ${clienteNombre || "Cliente"}
-Número: +${clienteNumeroSinPlus}
-Mensaje: ${mensaje || "(sin mensaje)"}
-
-👉 Responde usando comandos:
-• *r ${clienteNumeroSinPlus} | Hola, te atiendo…*
-• *leads* (ver últimos) / *who* (ver destino)`;
-      await enviarTexto(ADMIN_PHONE, aviso);
-      return true;
-    } catch (e2) {
-      console.error("ADMIN TEXT ERR:", e2.message);
-      return false;
-    }
+    return false;
   }
 }
 
-/* =================== Estado de leads + comandos admin =================== */
+/* =================== Estado de leads + MODO CHAT + comandos =================== */
 const processed = new Set();
 const recentLeads = []; // {num, name, at}
-const adminCtx = { currentTo: null, currentName: null };
+const adminCtx = { currentTo: null, currentName: null, chatMode: false };
 
 function yaProcesado(id) {
   if (!id) return false;
@@ -195,22 +192,45 @@ function pushLead(num, name) {
 
 function adminHelp() {
   const who = adminCtx.currentTo ? `→ destino actual: *${adminCtx.currentName}* (${adminCtx.currentTo})` : "→ *sin destino actual*";
+  const chat = adminCtx.chatMode ? "🟢 CHAT ACTIVO" : "⚪ CHAT INACTIVO";
   return (
-`🛠️ *Comandos de admin (responder como BOT)*
+`🛠️ *Comandos admin (responder como BOT)*  ${chat}
 ${who}
 
 • *r Mensaje...*  → responde al DESTINO ACTUAL.
 • *r 5939XXXXXXXX | Mensaje...* → fija destino y envía.
-• *rto 5939XXXXXXXX* → fija el destino actual sin enviar.
+• *rto 5939XXXXXXXX* → fija el destino sin enviar.
+• *leads* → últimos 5 leads  • *use N* → fija destino a ese lead.
 • *who* → muestra el destino actual.
-• *leads* → últimos 5 leads.
-• *use N* → fija el destino al lead N.
+• *stop* → desactiva el MODO CHAT.
 
-Ejemplo:  *r Hola, te escribo como Pro Campo Bot 👋*`
+TIP: con CHAT ACTIVO, cualquier mensaje tuyo (sin comando) se manda al cliente.`
   );
 }
 
-/* =================== Intents =================== */
+/* =================== Menús & intents =================== */
+function menuPrincipal(enHorario) {
+  const saludo =
+    `🤖🌱 *¡Hola! Soy ${BOT_NAME.toUpperCase()}* y estoy aquí para ayudarte.\n` +
+    "Elige una opción escribiendo el número:\n\n";
+  const nota = enHorario ? "" :
+    "_Fuera de horario: puedo darte información y dejamos la *compra* para el horario laboral (L–V 08:00–17:30, Sáb 08:00–13:00)._ \n\n";
+  return (
+    saludo + nota +
+    "1) Precios y promociones de *Khumic-100* (ácidos húmicos + fúlvicos)\n" +
+    "2) Precios y promociones de *Khumic – Seaweed 800* (algas marinas)\n" +
+    "3) Beneficios de *Khumic-100*\n" +
+    "4) Beneficios de *Khumic – Seaweed 800*\n" +
+    "5) Envíos y cómo encontrarnos\n" +
+    "6) *Fichas técnicas (PDF)*\n" +
+    "7) Hablar con un asesor 👨‍💼\n" +
+    "0) Volver al inicio"
+  );
+}
+function menuFichas() {
+  return "📑 *Fichas técnicas disponibles*\nEscribe:\n\n• *ficha 100* → Khumic-100\n• *ficha seaweed* → Seaweed 800";
+}
+
 function detectarIntent(texto) {
   const t = normalizarTexto(texto);
   if (/^(hola|buen[oa]s?|menu|men[uú]|inicio|start|0)$/i.test(t)) return "inicio";
@@ -250,24 +270,23 @@ app.post("/webhook", async (req, res) => {
     const msgId = msg.id;
     if (yaProcesado(msgId)) return;
 
-    const from = msg.from; // número del cliente (sin +)
+    const from = msg.from; // número del remitente (sin +)
     const texto = msg.text?.body || "";
     const name  = value?.contacts?.[0]?.profile?.name || "Cliente";
 
-    // === ADMIN: comandos en su propio chat con el bot ===
+    // ===== ADMIN (tu número): MODO CHAT & comandos =====
     if (ADMIN_PHONE && from === ADMIN_PHONE) {
       const t = texto.trim();
 
+      // Comandos primero
       // r 5939... | mensaje
       let m = t.match(/^r\s+(\+?\d[\d\s-]+)\s*\|\s*([\s\S]+)$/i);
       if (m) {
-        const num = toE164NoPlus(m[1]);
-        const body = m[2].trim();
+        const num = toE164NoPlus(m[1]); const body = m[2].trim();
         if (!num) return enviarTexto(from, "❌ Número inválido. Usa 5939XXXXXXXX.");
-        adminCtx.currentTo = num;
-        adminCtx.currentName = "Cliente";
-        await enviarTexto(num, body);
-        return enviarTexto(from, `✅ Enviado a ${num}`);
+        adminCtx.currentTo = num; adminCtx.currentName = "Cliente"; adminCtx.chatMode = true;
+        await enviarTextoConFallback(num, body, adminCtx.currentName);
+        return enviarTexto(from, `✅ Enviado a ${num} (chat activo)`);
       }
 
       // rto 5939...
@@ -275,15 +294,25 @@ app.post("/webhook", async (req, res) => {
       if (m) {
         const num = toE164NoPlus(m[1]);
         if (!num) return enviarTexto(from, "❌ Número inválido. Usa 5939XXXXXXXX.");
-        adminCtx.currentTo = num;
-        adminCtx.currentName = "Cliente";
-        return enviarTexto(from, `✅ Destino fijado: ${num}`);
+        adminCtx.currentTo = num; adminCtx.currentName = "Cliente";
+        adminCtx.chatMode = true;
+        return enviarTexto(from, `✅ Destino fijado: ${num} (chat activo)`);
+      }
+
+      // use N
+      m = t.match(/^use\s+(\d{1,2})$/i);
+      if (m) {
+        const idx = parseInt(m[1], 10) - 1;
+        const lead = recentLeads[idx];
+        if (!lead) return enviarTexto(from, "Índice inválido.");
+        adminCtx.currentTo = lead.num; adminCtx.currentName = lead.name; adminCtx.chatMode = true;
+        return enviarTexto(from, `✅ Destino: ${lead.name} (${lead.num}) (chat activo)`);
       }
 
       // who
       if (/^who$/i.test(t)) {
-        if (!adminCtx.currentTo) return enviarTexto(from, "ℹ️ No hay destino actual. Usa *rto 5939XXXXXXXX* o *leads*.");
-        return enviarTexto(from, `🎯 Destino actual: ${adminCtx.currentName} (${adminCtx.currentTo})`);
+        if (!adminCtx.currentTo) return enviarTexto(from, "ℹ️ No hay destino actual. Usa *leads* o *rto 5939XXXXXXXX*.");
+        return enviarTexto(from, `🎯 Destino actual: ${adminCtx.currentName} (${adminCtx.currentTo}) • Chat: ${adminCtx.chatMode ? "ON" : "OFF"}`);
       }
 
       // leads
@@ -293,30 +322,37 @@ app.post("/webhook", async (req, res) => {
         return enviarTexto(from, `📒 Últimos leads:\n${list}\n\nUsa *use N* para fijar destino.`);
       }
 
-      // use N
-      m = t.match(/^use\s+(\d{1,2})$/i);
-      if (m) {
-        const idx = parseInt(m[1], 10) - 1;
-        const lead = recentLeads[idx];
-        if (!lead) return enviarTexto(from, "Índice inválido.");
-        adminCtx.currentTo = lead.num;
-        adminCtx.currentName = lead.name;
-        return enviarTexto(from, `✅ Destino fijado: ${lead.name} (${lead.num})`);
+      // stop
+      if (/^stop$/i.test(t)) {
+        adminCtx.chatMode = false;
+        return enviarTexto(from, "✋ Chat desactivado. Usa *rto* o *use* para activarlo con un cliente.");
       }
 
       // r Mensaje...
       m = t.match(/^r\s+([\s\S]+)$/i);
       if (m) {
         if (!adminCtx.currentTo) return enviarTexto(from, "❌ No hay destino actual. Usa *leads* o *rto 5939XXXXXXXX*.");
-        const body = m[1].trim();
-        await enviarTexto(adminCtx.currentTo, body);
+        const body = m[1].trim(); adminCtx.chatMode = true;
+        await enviarTextoConFallback(adminCtx.currentTo, body, adminCtx.currentName);
         return enviarTexto(from, `✅ Enviado a ${adminCtx.currentTo}`);
       }
 
+      // Si CHAT ACTIVO: cualquier texto normal se reenvía al cliente
+      if (adminCtx.chatMode && adminCtx.currentTo) {
+        await enviarTextoConFallback(adminCtx.currentTo, t, adminCtx.currentName);
+        return enviarTexto(from, `↪️ (Tú) ${t}`);
+      }
+
+      // Si no hay chat activo ni comandos: mostrar ayuda
       return enviarTexto(from, adminHelp());
     }
 
-    // === Cliente normal ===
+    // ===== Cliente → si hay chat activo con este cliente, reenviar al admin =====
+    if (adminCtx.chatMode && adminCtx.currentTo === from && ADMIN_PHONE) {
+      await enviarTexto(ADMIN_PHONE, `📩 ${name}: ${texto}`);
+    }
+
+    // ===== Flujo normal de cliente =====
     const intent = detectarIntent(texto);
     const enHorario = esHorarioLaboral();
 
@@ -350,15 +386,18 @@ app.post("/webhook", async (req, res) => {
         : "Gracias por escribir. Un asesor te contactará en horario laboral. Puedo ayudarte por aquí mientras tanto. 🕗";
       await enviarTexto(from, msj);
 
-      // Registrar lead
+      // Registrar lead, fijar chat con este cliente y notificar al admin
       pushLead(from, name);
-
-      // Aviso al admin por PLANTILLA (hello_world). Si falla, intenta texto.
-      await notificarAdminPorPlantilla({
-        clienteNombre: name,
-        clienteNumeroSinPlus: from,
-        mensaje: texto,
-      });
+      adminCtx.chatMode = true;
+      await notificarAdminPorPlantilla(); // hello_world al admin
+      // Intento de texto explicativo al admin (si ventana abierta)
+      if (ADMIN_PHONE) {
+        try {
+          await enviarTexto(ADMIN_PHONE,
+            `🟢 CHAT ACTIVADO con ${name} (+${from}). Escribe tu mensaje aquí para responderle. ` +
+            `Comandos: *stop*, *leads*, *use N*, *who*, *r*.`);
+        } catch {}
+      }
       return;
     }
 
@@ -378,8 +417,8 @@ console.log("ENV CHECK:", {
   PHONE_NUMBER_ID,
   KHUMIC_PDF_ID,
   SEAWEED_PDF_ID,
-  TZ, BOT_NAME, ADMIN_PHONE, ADMIN_TEMPLATE, ADMIN_TEMPLATE_LANG
+  TZ, BOT_NAME, ADMIN_PHONE, ADMIN_TEMPLATE, ADMIN_TEMPLATE_LANG,
+  CUSTOMER_TEMPLATE, CUSTOMER_TEMPLATE_LANG
 });
 
 app.listen(PORT, () => console.log(`Bot listo en puerto ${PORT}`));
-
