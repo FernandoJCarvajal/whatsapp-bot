@@ -1,5 +1,5 @@
-// index.js — Pro Campo Bot (Handoff + Slots rápidos 1..20)
-// Node 18+, package.json con { "type": "module" }
+// index.js — Pro Campo Bot (Slots 1..20 + recordatorios + admin fuera 24h con plantilla)
+// Node 18+, package.json { "type": "module" }
 
 import express from "express";
 const app = express();
@@ -14,12 +14,12 @@ const {
   SEAWEED_PDF_ID,
   TZ = "America/Guayaquil",
   BOT_NAME = "PRO CAMPO BOT",
-  ADMIN_PHONE, // 5939XXXXXXXX (sin +)
+  ADMIN_PHONE, // 5939XXXXXXXX sin +
+  ADMIN_TEMPLATE = "lead_alert_util", // plantilla para notificar al admin
 } = process.env;
 
 const DISPLAY_BOT_NAME = "PRO-CAMPO BOT";
 
-/* ========== Utils ========== */
 const mask = s => (s ? s.slice(0, 4) + "***" : "MISSING");
 console.log("ENV CHECK:", {
   VERIFY: !!WHATSAPP_VERIFY_TOKEN,
@@ -27,7 +27,7 @@ console.log("ENV CHECK:", {
   PHONE_NUMBER_ID,
   KHUMIC_PDF_ID,
   SEAWEED_PDF_ID,
-  TZ, BOT_NAME, ADMIN_PHONE
+  TZ, BOT_NAME, ADMIN_PHONE, ADMIN_TEMPLATE
 });
 
 function normalizar(t = "") {
@@ -39,71 +39,148 @@ function esHorarioLaboral(date = new Date()) {
     hour: "2-digit", minute: "2-digit",
   }).format(date);
   const d = new Date(f);
-  const w = d.getDay(); const m = d.getHours()*60 + d.getMinutes();
-  const LV = (w>=1 && w<=5) && (m>=8*60 && m<=17*60+30);
-  const SA = (w===6) && (m>=8*60 && m<=13*60);
+  const w = d.getDay();
+  const m = d.getHours() * 60 + d.getMinutes();
+  const LV = (w >= 1 && w <= 5) && (m >= 8 * 60 && m <= 17 * 60 + 30);
+  const SA = (w === 6) && (m >= 8 * 60 && m <= 13 * 60);
   return LV || SA;
 }
+
 const processed = new Set();
-function yaProcesado(id){ if(!id) return false; if(processed.has(id)) return true; processed.add(id); setTimeout(()=>processed.delete(id), 5*60*1000); return false; }
-function shortTicket(seed=""){ let h=0; for(const c of seed) h=(h*31+c.charCodeAt(0))>>>0; return h.toString(36).slice(-6).toUpperCase(); }
+function yaProcesado(id) {
+  if (!id) return false;
+  if (processed.has(id)) return true;
+  processed.add(id);
+  setTimeout(() => processed.delete(id), 5 * 60 * 1000);
+  return false;
+}
+function shortTicket(seed = "") {
+  let h = 0;
+  for (const c of seed) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return h.toString(36).slice(-6).toUpperCase();
+}
 
 /* ========== WA helpers ========== */
-async function waFetch(path, payload){
+async function waFetch(path, payload) {
   const url = `https://graph.facebook.com/v20.0/${PHONE_NUMBER_ID}/${path}`;
   const r = await fetch(url, {
-    method:"POST",
-    headers:{ Authorization:`Bearer ${WHATSAPP_TOKEN}`, "Content-Type":"application/json" },
-    body: JSON.stringify(payload)
+    method: "POST",
+    headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
   });
-  if(!r.ok) throw new Error(await r.text());
+  if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
-async function enviarTexto(to, body){
-  try { await waFetch("messages",{ messaging_product:"whatsapp", to, type:"text", text:{ body } }); return true; }
-  catch(e){ console.error("WA TEXT ERR:", e.message); return false; }
-}
-async function enviarDocumentoPorId(to, { mediaId, filename, caption }){
-  if(!mediaId) return enviarTexto(to,"No encuentro la ficha ahora. Intenta en unos minutos 🙏");
+async function enviarTexto(to, body) {
   try {
-    await waFetch("messages",{ messaging_product:"whatsapp", to, type:"document", document:{ id:mediaId, filename, caption } });
-  } catch(e){ console.error("WA DOC ERR:", e.message); }
+    await waFetch("messages", { messaging_product: "whatsapp", to, type: "text", text: { body } });
+    return true;
+  } catch (e) {
+    console.error("WA TEXT ERR:", e.message);
+    return false;
+  }
+}
+
+// ⚠️ Para el admin: intenta texto y si falla usa plantilla (sirve fuera de 24 h)
+async function notificarAdmin({ name = "Cliente", num, ticket, slot, texto = "Nuevo contacto" }) {
+  if (!ADMIN_PHONE) return;
+  const prefix = slot ? `[${slot}] ` : "";
+  const body = `${prefix}#${ticket} — ${name}: ${texto}`;
+  const ok = await enviarTexto(ADMIN_PHONE, body);
+  if (ok) return;
+
+  try {
+    await waFetch("messages", {
+      messaging_product: "whatsapp",
+      to: ADMIN_PHONE,
+      type: "template",
+      template: {
+        name: ADMIN_TEMPLATE,
+        language: { code: "es" },
+        components: [{
+          type: "body",
+          parameters: [
+            { type: "text", text: DISPLAY_BOT_NAME }, // {{1}}
+            { type: "text", text: name },             // {{2}}
+            { type: "text", text: `+${num}` },        // {{3}}
+            { type: "text", text: `#${ticket}` },     // {{4}}
+            { type: "text", text: texto },            // {{5}}
+          ],
+        }],
+      },
+    });
+  } catch (e) {
+    console.error("WA TEMPLATE ERR:", e.message);
+  }
+}
+
+async function enviarDocumentoPorId(to, { mediaId, filename, caption }) {
+  if (!mediaId) return enviarTexto(to, "No encuentro la ficha ahora. Intenta en unos minutos 🙏");
+  try {
+    await waFetch("messages", {
+      messaging_product: "whatsapp",
+      to, type: "document",
+      document: { id: mediaId, filename, caption },
+    });
+  } catch (e) {
+    console.error("WA DOC ERR:", e.message);
+  }
 }
 
 /* ========== Tickets, Handoff y SLOTS ========== */
-const tickets = new Map();          // ticketId -> { num, name, handoff, slot }
+const tickets = new Map();          // ticketId -> { num, name, handoff, slot, lastClientAt, unread, lastReminderAt }
 const byNumber = new Map();         // num -> ticketId
-const recent = [];                  // últimos tickets (histórico)
+const recent = [];                  // últimos tickets
 const slots = new Map();            // slotNumber -> ticketId
 const slotByTicket = new Map();     // ticketId -> slotNumber
 const MAX_SLOTS = 20;
 
-function ensureTicket(num, name, seedForId){
+function ensureTicket(num, name, seedForId) {
   let ticket = byNumber.get(num);
-  if(!ticket){
+  if (!ticket) {
     ticket = shortTicket(seedForId || num);
-    let i=0; while(tickets.has(ticket)) ticket = shortTicket(ticket+(++i));
-    tickets.set(ticket,{ num, name: name||"Cliente", handoff:false, slot:null });
+    let i = 0; while (tickets.has(ticket)) ticket = shortTicket(ticket + (++i));
+    tickets.set(ticket, {
+      num,
+      name: name || "Cliente",
+      handoff: false,
+      slot: null,
+      lastClientAt: 0,
+      unread: 0,
+      lastReminderAt: 0,
+    });
     byNumber.set(num, ticket);
-    recent.unshift({ ticket, name:name||"Cliente" });
-    if(recent.length>20) recent.pop();
-  } else { const t = tickets.get(ticket); if(name && t && !t.name) t.name = name; }
+    recent.unshift({ ticket, name: name || "Cliente" });
+    if (recent.length > 20) recent.pop();
+  } else {
+    const t = tickets.get(ticket);
+    if (name && t && !t.name) t.name = name;
+  }
   return ticket;
 }
-function assignSlot(ticketId){
-  if(slotByTicket.has(ticketId)) return slotByTicket.get(ticketId);
-  for(let s=1; s<=MAX_SLOTS; s++){
-    if(!slots.has(s)){ slots.set(s, ticketId); slotByTicket.set(ticketId, s); tickets.get(ticketId).slot = s; return s; }
+function assignSlot(ticketId) {
+  if (slotByTicket.has(ticketId)) return slotByTicket.get(ticketId);
+  for (let s = 1; s <= MAX_SLOTS; s++) {
+    if (!slots.has(s)) {
+      slots.set(s, ticketId);
+      slotByTicket.set(ticketId, s);
+      tickets.get(ticketId).slot = s;
+      return s;
+    }
   }
-  return null; // lleno
+  return null;
 }
-function freeSlot(ticketId){
+function freeSlot(ticketId) {
   const s = slotByTicket.get(ticketId);
-  if(s){ slots.delete(s); slotByTicket.delete(ticketId); const t = tickets.get(ticketId); if(t) t.slot = null; }
+  if (s) {
+    slots.delete(s);
+    slotByTicket.delete(ticketId);
+    const t = tickets.get(ticketId); if (t) t.slot = null;
+  }
 }
 
 /* ========== Textos / Menú ========== */
-function withFooter(txt){
+function withFooter(txt) {
   return txt + "\n\n➡️ *Para continuar*, responde con el número:\n• 7️⃣ Hablar con un asesor\n• 0️⃣ Volver al inicio";
 }
 const MSG_PRECIOS_KHUMIC = withFooter(
@@ -163,7 +240,7 @@ const MSG_LINKS = withFooter(
 • 🎵 TikTok: https://www.tiktok.com/@procampoecuador?_t=ZM-90MOoBwfgSZ&_r=1`
 );
 
-function menuPrincipal(enHorario){
+function menuPrincipal(enHorario) {
   const saludo =
     `🤖🌱✨ *¡Hola! Soy ${DISPLAY_BOT_NAME}* — *estoy aquí para ayudarte* 🤝🌟💬🧑‍🌾.\n` +
     "➡️ *Para seleccionar la opción, responde con el número de lo que necesitas conocer.*\n\n";
@@ -181,144 +258,143 @@ function menuPrincipal(enHorario){
 }
 
 /* ========== Intent helpers ========== */
-function detectarNumeroEnFrase(t){
-  const m = t.match(/(?:^|\D)([0-8])(?:\D|$)/); if(m) return m[1];
-  const map={cero:"0",uno:"1",dos:"2",tres:"3",cuatro:"4",cinco:"5",seis:"6",siete:"7",ocho:"8"};
-  for(const [w,n] of Object.entries(map)){ if(new RegExp(`\\b${w}\\b`).test(t)) return n; }
+function detectarNumeroEnFrase(t) {
+  const m = t.match(/(?:^|\D)([0-8])(?:\D|$)/);
+  if (m) return m[1];
+  const map = { cero: "0", uno: "1", dos: "2", tres: "3", cuatro: "4", cinco: "5", seis: "6", siete: "7", ocho: "8" };
+  for (const [w, n] of Object.entries(map)) if (new RegExp(`\\b${w}\\b`).test(t)) return n;
   return null;
 }
-function detectarIntent(texto){
+function detectarIntent(texto) {
   const t = normalizar(texto);
   if (/^7$/.test(t) || /asesor|agente|humano|contactar|comprar|necesito comprar/i.test(t)) return "asesor";
   if (/^6$/.test(t) || /^fichas?$/i.test(t)) return "menu_fichas";
   if (/\bficha\b/.test(t) && /\b(100|khumic|humic)\b/.test(t)) return "ficha_khumic";
   if (/\bficha\b/.test(t) && /\b(seaweed|800|algas)\b/.test(t)) return "ficha_seaweed";
   if (/^8$/.test(t) || /web|sitio|redes|facebook|tiktok/i.test(t)) return "links";
-
   const num = detectarNumeroEnFrase(t);
-  if (num!==null){ return { "0":"inicio","1":"op1","2":"op2","3":"op3","4":"op4","5":"op5","6":"menu_fichas","7":"asesor","8":"links" }[num]; }
-
+  if (num !== null) return { "0": "inicio", "1": "op1", "2": "op2", "3": "op3", "4": "op4", "5": "op5", "6": "menu_fichas", "7": "asesor", "8": "links" }[num];
   if (/^(hola|buen[oa]s?|menu|men[uú]|inicio|start|0)$/i.test(t)) return "inicio";
   if (/gracias|muchas gracias|mil gracias|thank/i.test(t)) return "gracias";
   return "fallback";
 }
 
 /* ========== Webhook verify ========== */
-app.get("/webhook",(req,res)=>{
-  const mode=req.query["hub.mode"], token=req.query["hub.verify_token"], challenge=req.query["hub.challenge"];
-  if(mode==="subscribe" && token===WHATSAPP_VERIFY_TOKEN) return res.status(200).send(challenge);
+app.get("/webhook", (req, res) => {
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+  if (mode === "subscribe" && token === WHATSAPP_VERIFY_TOKEN) return res.status(200).send(challenge);
   res.sendStatus(403);
 });
 
 /* ========== Webhook receive ========== */
-app.post("/webhook", async (req,res)=>{
+app.post("/webhook", async (req, res) => {
   res.sendStatus(200);
-  try{
-    const entry=req.body.entry?.[0];
-    const value=entry?.changes?.[0]?.value;
-    const msg=value?.messages?.[0];
-    if(!msg) return;
-    if(yaProcesado(msg.id)) return;
+  try {
+    const entry = req.body.entry?.[0];
+    const value = entry?.changes?.[0]?.value;
+    const msg = value?.messages?.[0];
+    if (!msg) return;
+    if (yaProcesado(msg.id)) return;
 
-    const from=msg.from;
-    const texto=msg.text?.body || "";
-    const name=value?.contacts?.[0]?.profile?.name || "Cliente";
+    const from = msg.from;
+    const texto = msg.text?.body || "";
+    const name = value?.contacts?.[0]?.profile?.name || "Cliente";
 
     /* ===== ADMIN (tu número) ===== */
-    if(ADMIN_PHONE && from===ADMIN_PHONE){
-      const t=texto.trim();
+    if (ADMIN_PHONE && from === ADMIN_PHONE) {
+      const t = texto.trim();
       let m;
 
-      // Lista de chats (slots)
-      if(/^chats?$/i.test(t)){
-        const items=[...slots.keys()].sort((a,b)=>a-b).map(s=>{
-          const tk=slots.get(s); const info=tickets.get(tk);
-          return `${s}) #${tk} — ${info?.name}`;
+      if (/^chats?$/i.test(t)) {
+        const items = [...slots.keys()].sort((a, b) => a - b).map(s => {
+          const tk = slots.get(s); const info = tickets.get(tk);
+          const pend = info?.unread ? ` [${info.unread}]` : "";
+          return `${s}) #${tk} — ${info?.name}${pend}`;
         }).join("\n") || "(sin chats en handoff)";
-        return enviarTexto(from, `📒 Chats activos (slots):\n${items}\n\nResponde con: *<slot> mensaje*  (ej. "3 Hola")`);
+        return enviarTexto(from, `📒 Chats activos (slots):\n${items}\n\nResponde: *<slot> mensaje*  (ej. "3 Hola")`);
       }
-
-      // use <slot>  (prioriza slots; si no, acepta índice de 'recent')
-      if((m=t.match(/^use\s+(\d{1,2})$/i))){
-        const s = parseInt(m[1],10);
+      if ((m = t.match(/^use\s+(\d{1,2})$/i))) {
+        const s = parseInt(m[1], 10);
         let tk = slots.get(s);
-        if(!tk){ const item=recent[s-1]; if(item) tk=item.ticket; }
-        if(!tk) return enviarTexto(from,"Índice/slot inválido.");
-        adminCtx.activeTicket=tk;
-        const inf=tickets.get(tk);
-        return enviarTexto(from, `✅ Ticket activo: #${tk} — ${inf?.name}${inf?.handoff?" (handoff)":""}.`);
+        if (!tk) { const item = recent[s - 1]; if (item) tk = item.ticket; }
+        if (!tk) return enviarTexto(from, "Índice/slot inválido.");
+        adminCtx.activeTicket = tk;
+        const inf = tickets.get(tk);
+        return enviarTexto(from, `✅ Ticket activo: #${tk} — ${inf?.name}${inf?.handoff ? " (handoff)" : ""}.`);
       }
-
-      // use #ABC123
-      if((m=t.match(/^use\s+#([A-Z0-9]{4,8})$/i))){
-        const tk=m[1].toUpperCase();
-        if(!tickets.has(tk)) return enviarTexto(from,`No encuentro #${tk}.`);
-        adminCtx.activeTicket=tk;
-        const inf=tickets.get(tk);
-        return enviarTexto(from, `✅ Ticket activo: #${tk} — ${inf?.name}${inf?.handoff?" (handoff)":""}.`);
+      if ((m = t.match(/^use\s+#([A-Z0-9]{4,8})$/i))) {
+        const tk = m[1].toUpperCase();
+        if (!tickets.has(tk)) return enviarTexto(from, `No encuentro #${tk}.`);
+        adminCtx.activeTicket = tk;
+        const inf = tickets.get(tk);
+        return enviarTexto(from, `✅ Ticket activo: #${tk} — ${inf?.name}${inf?.handoff ? " (handoff)" : ""}.`);
       }
-
-      // who / stop
-      if(/^who$/i.test(t)){
-        if(!adminCtx.activeTicket) return enviarTexto(from,"No hay ticket activo.");
-        const tk=adminCtx.activeTicket; const inf=tickets.get(tk);
+      if (/^who$/i.test(t)) {
+        if (!adminCtx.activeTicket) return enviarTexto(from, "No hay ticket activo.");
+        const tk = adminCtx.activeTicket; const inf = tickets.get(tk);
         const s = slotByTicket.get(tk);
-        return enviarTexto(from, `🎯 Activo: #${tk} — ${inf?.name}${inf?.handoff?" (handoff)":""}${s?` • Slot ${s}`:""}`);
+        return enviarTexto(from, `🎯 Activo: #${tk} — ${inf?.name}${inf?.handoff ? " (handoff)" : ""}${s ? ` • Slot ${s}` : ""}`);
       }
-      if(/^stop$/i.test(t)){ adminCtx.activeTicket=null; return enviarTexto(from,"✋ Chat desactivado."); }
+      if (/^stop$/i.test(t)) { adminCtx.activeTicket = null; return enviarTexto(from, "✋ Chat desactivado."); }
 
-      // bot / end  (quitar handoff y liberar slot)
-      if((m=t.match(/^(bot|end)(?:\s+#([A-Z0-9]{4,8})|\s+(\d{1,2}))?$/i))){
-        const cmd=m[1].toLowerCase();
-        let tk=null;
-        if(m[2]) tk=m[2].toUpperCase();
-        else if(m[3]) tk=slots.get(parseInt(m[3],10));
-        else tk=adminCtx.activeTicket;
-        if(!tk || !tickets.has(tk)) return enviarTexto(from,"No encuentro el ticket.");
-        tickets.get(tk).handoff=false; freeSlot(tk);
-        return enviarTexto(from, cmd==="end" ? `✅ Cerrado y bot reactivado para #${tk}.` : `🤖 Bot reactivado para #${tk}.`);
+      if ((m = t.match(/^(bot|end)(?:\s+#([A-Z0-9]{4,8})|\s+(\d{1,2}))?$/i))) {
+        const cmd = m[1].toLowerCase();
+        let tk = null;
+        if (m[2]) tk = m[2].toUpperCase();
+        else if (m[3]) tk = slots.get(parseInt(m[3], 10));
+        else tk = adminCtx.activeTicket;
+        if (!tk || !tickets.has(tk)) return enviarTexto(from, "No encuentro el ticket.");
+        const info = tickets.get(tk);
+        info.handoff = false; info.unread = 0; info.lastReminderAt = 0;
+        freeSlot(tk);
+        return enviarTexto(from, cmd === "end" ? `✅ Cerrado y bot reactivado para #${tk}.` : `🤖 Bot reactivado para #${tk}.`);
+      }
+      if ((m = t.match(/^(\d{1,2})\?$/))) {
+        const s = parseInt(m[1], 10); const tk = slots.get(s);
+        if (!tk) return enviarTexto(from, "Slot vacío.");
+        const inf = tickets.get(tk);
+        return enviarTexto(from, `Slot ${s}: #${tk} — ${inf?.name}${inf?.unread ? ` • pendientes: ${inf.unread}` : ""}`);
       }
 
-      // info de slot: "3?"
-      if((m=t.match(/^(\d{1,2})\?$/))){
-        const s=parseInt(m[1],10); const tk=slots.get(s);
-        if(!tk) return enviarTexto(from,"Slot vacío.");
-        const inf=tickets.get(tk);
-        return enviarTexto(from, `Slot ${s}: #${tk} — ${inf?.name}`);
-      }
-
-      // RESPONDER RÁPIDO: "<slot> mensaje"
-      if((m=t.match(/^(\d{1,2})\s+([\s\S]+)/))){
-        const s=parseInt(m[1],10); const body=m[2];
-        const tk=slots.get(s);
-        if(!tk) return enviarTexto(from,"Slot inválido.");
-        const dest=tickets.get(tk)?.num; if(!dest) return enviarTexto(from,"Ticket inválido.");
+      // Rápido: "<slot> mensaje"
+      if ((m = t.match(/^(\d{1,2})\s+([\s\S]+)/))) {
+        const s = parseInt(m[1], 10); const body = m[2];
+        const tk = slots.get(s);
+        if (!tk) return enviarTexto(from, "Slot inválido.");
+        const info = tickets.get(tk); const dest = info?.num; if (!dest) return enviarTexto(from, "Ticket inválido.");
         await enviarTexto(dest, body);
+        info.unread = 0; info.lastReminderAt = 0;
         return enviarTexto(from, `📨 Enviado a [${s}] #${tk}.`);
       }
 
-      // Compatibilidad: r #ID / r <slot> / r mensaje (activo)
+      // Compat: r #ID / r <slot> / r msg (activo)
       let mm;
-      if((mm=t.match(/^r\s+#([A-Z0-9]{4,8})\s+([\s\S]+)/i))){
-        const tk=mm[1].toUpperCase(), body=mm[2]; const dest=tickets.get(tk)?.num;
-        if(!dest) return enviarTexto(from,"Ticket inválido.");
-        await enviarTexto(dest,body); return enviarTexto(from,`📨 Enviado a #${tk}.`);
+      if ((mm = t.match(/^r\s+#([A-Z0-9]{4,8})\s+([\s\S]+)/i))) {
+        const tk = mm[1].toUpperCase(), body = mm[2]; const inf = tickets.get(tk); const dest = inf?.num;
+        if (!dest) return enviarTexto(from, "Ticket inválido.");
+        await enviarTexto(dest, body); inf.unread = 0; inf.lastReminderAt = 0;
+        return enviarTexto(from, `📨 Enviado a #${tk}.`);
       }
-      if((mm=t.match(/^r\s+(\d{1,2})\s+([\s\S]+)/i))){
-        const s=parseInt(mm[1],10), body=mm[2]; const tk=slots.get(s); const dest=tk&&tickets.get(tk)?.num;
-        if(!dest) return enviarTexto(from,"Slot inválido.");
-        await enviarTexto(dest,body); return enviarTexto(from,`📨 Enviado a [${s}] #${tk}.`);
+      if ((mm = t.match(/^r\s+(\d{1,2})\s+([\s\S]+)/i))) {
+        const s = parseInt(mm[1], 10), body = mm[2]; const tk = slots.get(s); const inf = tickets.get(tk); const dest = inf?.num;
+        if (!dest) return enviarTexto(from, "Slot inválido.");
+        await enviarTexto(dest, body); inf.unread = 0; inf.lastReminderAt = 0;
+        return enviarTexto(from, `📨 Enviado a [${s}] #${tk}.`);
       }
-      if((mm=t.match(/^r\s+([\s\S]+)/i))){
-        if(!adminCtx.activeTicket) return enviarTexto(from,"No hay ticket activo. Usa *chats* o *use <slot>*.");
-        const dest=tickets.get(adminCtx.activeTicket)?.num; if(!dest) return enviarTexto(from,"Ticket inválido.");
-        await enviarTexto(dest, mm[1]); return enviarTexto(from,`📨 Enviado a #${adminCtx.activeTicket}.`);
+      if ((mm = t.match(/^r\s+([\s\S]+)/i))) {
+        if (!adminCtx.activeTicket) return enviarTexto(from, "No hay ticket activo. Usa *chats* o *use <slot>*.");
+        const inf = tickets.get(adminCtx.activeTicket); const dest = inf?.num; if (!dest) return enviarTexto(from, "Ticket inválido.");
+        await enviarTexto(dest, mm[1]); inf.unread = 0; inf.lastReminderAt = 0;
+        return enviarTexto(from, `📨 Enviado a #${adminCtx.activeTicket}.`);
       }
 
-      // Ayuda
-      const items=[...slots.keys()].sort((a,b)=>a-b).map(s=>{
-        const tk=slots.get(s); const info=tickets.get(tk);
-        return `${s}) #${tk} — ${info?.name}`;
+      // Ayuda por defecto
+      const items = [...slots.keys()].sort((a, b) => a - b).map(s => {
+        const tk = slots.get(s); const info = tickets.get(tk);
+        const pend = info?.unread ? ` [${info.unread}]` : "";
+        return `${s}) #${tk} — ${info?.name}${pend}`;
       }).join("\n") || "(sin chats en handoff)";
       return enviarTexto(from,
 `📒 Chats activos (slots):
@@ -328,8 +404,8 @@ Responder rápido:
 • *<slot> mensaje*   → ej. "3 Hola"
 • *3?*               → info del slot 3
 • *chats*            → lista de slots
-• *use <slot>*       → fijar activo
-• *r <slot> msg* / *r #ID msg* / *r msg (activo)*
+• *use <slot|#ID>*   → fijar activo
+• *r <slot|#ID> msg* / *r msg (activo)*
 
 Cerrar o volver bot:
 • *bot <slot|#ID>*   → reactivar bot
@@ -337,13 +413,15 @@ Cerrar o volver bot:
     }
 
     /* ===== CLIENTE ===== */
-    const ticketId = ensureTicket(from, name, msg.id||from);
+    const ticketId = ensureTicket(from, name, msg.id || from);
     const tInfo = tickets.get(ticketId);
 
-    // Si está en handoff: no responde el bot; reenvía SIEMPRE al admin con slot
-    if(tInfo?.handoff){
+    // Si handoff: no responde el bot, solo reenvía SIEMPRE al admin (con plantilla si hace falta)
+    if (tInfo?.handoff) {
       const s = slotByTicket.get(ticketId) || assignSlot(ticketId);
-      if(ADMIN_PHONE) await enviarTexto(ADMIN_PHONE, `📩 [${s}] #${ticketId} — ${name}: ${texto}`);
+      tInfo.lastClientAt = Date.now();
+      tInfo.unread = (tInfo.unread || 0) + 1;
+      await notificarAdmin({ name, num: from, ticket: ticketId, slot: `S${s}`, texto });
       return;
     }
 
@@ -351,21 +429,20 @@ Cerrar o volver bot:
     const intent = detectarIntent(texto);
     const enHorario = esHorarioLaboral();
 
-    if(intent==="inicio") return enviarTexto(from, menuPrincipal(enHorario));
-    if(intent==="op1")   return enviarTexto(from, MSG_PRECIOS_KHUMIC);
-    if(intent==="op2")   return enviarTexto(from, MSG_PRECIOS_SEAWEED);
-    if(intent==="op3")   return enviarTexto(from, MSG_BENEFICIOS_KHUMIC);
-    if(intent==="op4")   return enviarTexto(from, MSG_BENEFICIOS_SEAWEED);
-    if(intent==="op5")   return enviarTexto(from, MSG_ENVIOS);
-    if(intent==="menu_fichas") return enviarTexto(from, MSG_FICHAS);
-    if(intent==="links") return enviarTexto(from, MSG_LINKS);
-    if(intent==="ficha_khumic")
-      return enviarDocumentoPorId(from,{ mediaId:KHUMIC_PDF_ID, filename:"Khumic-100-ficha.pdf", caption:"📄 Ficha Khumic-100." });
-    if(intent==="ficha_seaweed")
-      return enviarDocumentoPorId(from,{ mediaId:SEAWEED_PDF_ID, filename:"Seaweed-800-ficha.pdf", caption:"📄 Ficha Seaweed 800." });
+    if (intent === "inicio") return enviarTexto(from, menuPrincipal(enHorario));
+    if (intent === "op1") return enviarTexto(from, MSG_PRECIOS_KHUMIC);
+    if (intent === "op2") return enviarTexto(from, MSG_PRECIOS_SEAWEED);
+    if (intent === "op3") return enviarTexto(from, MSG_BENEFICIOS_KHUMIC);
+    if (intent === "op4") return enviarTexto(from, MSG_BENEFICIOS_SEAWEED);
+    if (intent === "op5") return enviarTexto(from, MSG_ENVIOS);
+    if (intent === "menu_fichas") return enviarTexto(from, MSG_FICHAS);
+    if (intent === "links") return enviarTexto(from, MSG_LINKS);
+    if (intent === "ficha_khumic")
+      return enviarDocumentoPorId(from, { mediaId: KHUMIC_PDF_ID, filename: "Khumic-100-ficha.pdf", caption: "📄 Ficha Khumic-100." });
+    if (intent === "ficha_seaweed")
+      return enviarDocumentoPorId(from, { mediaId: SEAWEED_PDF_ID, filename: "Seaweed-800-ficha.pdf", caption: "📄 Ficha Seaweed 800." });
 
-    if(intent==="asesor"){
-      // activar handoff y asignar slot
+    if (intent === "asesor") {
       tInfo.handoff = true;
       const slot = assignSlot(ticketId);
       const msj = enHorario
@@ -373,23 +450,47 @@ Cerrar o volver bot:
         : "Gracias por escribir. Un asesor te contactará en horario laboral. Puedo ayudarte por aquí mientras tanto. 🕗";
       await enviarTexto(from, msj);
 
-      // Notifica al admin con instrucciones rápidas
-      if(ADMIN_PHONE){
-        await enviarTexto(ADMIN_PHONE,
-          `🟢 Chat activado (S${slot}) #${ticketId}\nCliente: ${name}\nResponde con: *${slot} Tu mensaje*\n`+
-          `Ver lista: *chats* • Cerrar: *bot ${slot}* / *end ${slot}*`
-        );
-      }
+      await notificarAdmin({
+        name, num: from, ticket: ticketId, slot: `S${slot}`,
+        texto: `🟢 Chat activado. Responde con: *${slot} Tu mensaje*  • Ver lista: *chats*  • Cerrar: *bot ${slot}*`
+      });
       return;
     }
 
-    if(intent==="gracias") return enviarTexto(from,"¡Con gusto! 😊 ¿Algo más?");
+    if (intent === "gracias") return enviarTexto(from, "¡Con gusto! 😊 ¿Algo más?");
     return enviarTexto(from, menuPrincipal(enHorario));
-  }catch(e){ console.error("Webhook error:", e); }
+
+  } catch (e) {
+    console.error("Webhook error:", e);
+  }
 });
 
+/* ========== Recordatorios automáticos ========== */
+const REMIND_AFTER_MIN = 5;       // minutos sin respuesta del admin
+const REMIND_CHECK_SEC = 60;      // cada cuánto revisamos
+
+setInterval(async () => {
+  const now = Date.now();
+  for (const [tk, info] of tickets) {
+    if (!info.handoff) continue;
+    if (!info.unread) continue; // solo si hay mensajes pendientes del cliente
+    if (!info.lastClientAt) continue;
+
+    const mins = Math.floor((now - info.lastClientAt) / 60000);
+    if (mins >= REMIND_AFTER_MIN && now - (info.lastReminderAt || 0) >= REMIND_AFTER_MIN * 60000) {
+      const s = slotByTicket.get(tk) || assignSlot(tk);
+      await notificarAdmin({
+        name: info.name,
+        num: info.num,
+        ticket: tk,
+        slot: `S${s}`,
+        texto: `⏰ Mensajes pendientes hace ${mins} min. Responde: *${s} <texto>*  • Cerrar: *bot ${s}*`
+      });
+      info.lastReminderAt = now;
+    }
+  }
+}, REMIND_CHECK_SEC * 1000);
+
 /* ========== Healthcheck ========== */
-app.get("/", (_req,res)=>res.send("OK"));
-app.listen(PORT, ()=>console.log(`Bot listo en puerto ${PORT}`));
-
-
+app.get("/", (_req, res) => res.send("OK"));
+app.listen(PORT, () => console.log(`Bot listo en puerto ${PORT}`));
