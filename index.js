@@ -1,5 +1,6 @@
 // index.js — Pro Campo Bot
-// Slots 1..20 + recordatorios con preview + cierre auto 30' + plantilla admin (lead_alert_util)
+// Slots 1..20 + pendientes completos + recordatorios con varias líneas + cierre auto 30'
+// Plantilla admin: lead_alert_util (5 params)
 // Node 18+, package.json { "type": "module" }
 
 import express from "express";
@@ -15,10 +16,12 @@ const {
   SEAWEED_PDF_ID,
   TZ = "America/Guayaquil",
   BOT_NAME = "PRO CAMPO BOT",
-  ADMIN_PHONE,                  // 5939XXXXXXXX (sin +)
+  ADMIN_PHONE,                        // 5939XXXXXXXX (sin +)
   ADMIN_TEMPLATE = "lead_alert_util", // plantilla con 5 parámetros
-  REMIND_AFTER_MIN = 5,         // recordatorio si hay msgs pendientes
-  AUTO_CLOSE_MIN = 30,          // cierre auto si el cliente no responde al admin
+  REMIND_AFTER_MIN = 5,               // recordatorio si hay msgs pendientes
+  AUTO_CLOSE_MIN = 30,                // cierre auto si el cliente no responde al admin
+  CHATS_PENDING_MAX = 10,             // cuántas líneas mostrar por slot en 'chats'
+  REMIND_PENDING_MAX = 5,             // cuántas líneas incluir en recordatorios
 } = process.env;
 
 const DISPLAY_BOT_NAME = "PRO-CAMPO BOT";
@@ -32,7 +35,7 @@ console.log("ENV CHECK:", {
   KHUMIC_PDF_ID,
   SEAWEED_PDF_ID,
   TZ, BOT_NAME, ADMIN_PHONE, ADMIN_TEMPLATE,
-  REMIND_AFTER_MIN, AUTO_CLOSE_MIN
+  REMIND_AFTER_MIN, AUTO_CLOSE_MIN, CHATS_PENDING_MAX, REMIND_PENDING_MAX
 });
 
 function normalizar(t = "") {
@@ -53,27 +56,23 @@ function esHorarioLaboral(date = new Date()) {
 const processed = new Set();
 function yaProcesado(id){ if(!id) return false; if(processed.has(id)) return true; processed.add(id); setTimeout(()=>processed.delete(id), 5*60*1000); return false; }
 function shortTicket(seed=""){ let h=0; for(const c of seed) h=(h*31+c.charCodeAt(0))>>>0; return h.toString(36).slice(-6).toUpperCase(); }
-
-// Preview bonita del último mensaje
-function preview(txt, max=120){
-  if(!txt) return "";
-  const oneLine = String(txt).replace(/\s+/g," ").trim();
-  return oneLine.length > max ? oneLine.slice(0, max-1) + "…" : oneLine;
-}
+function minutesAgo(ts){ return Math.max(0, Math.floor((Date.now()-ts)/60000)); }
+function oneLine(s){ return String(s||"").replace(/\s+/g," ").trim(); }
+function preview(s, max=120){ const t=oneLine(s); return t.length>max ? t.slice(0,max-1)+"…" : t; }
 
 /* ===== WhatsApp helpers ===== */
 async function waFetch(path, payload){
   const url = `https://graph.facebook.com/v20.0/${PHONE_NUMBER_ID}/${path}`;
   const r = await fetch(url, {
-    method:"POST",
-    headers:{ Authorization:`Bearer ${WHATSAPP_TOKEN}`, "Content-Type":"application/json" },
+    method: "POST",
+    headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
   if(!r.ok) throw new Error(await r.text());
   return r.json();
 }
 async function enviarTexto(to, body){
-  try { await waFetch("messages",{ messaging_product:"whatsapp", to, type:"text", text:{ body } }); return true; }
+  try { await waFetch("messages", { messaging_product:"whatsapp", to, type:"text", text:{ body } }); return true; }
   catch(e){ console.error("WA TEXT ERR:", e.message); return false; }
 }
 async function enviarDocumentoPorId(to, { mediaId, filename, caption }){
@@ -85,15 +84,12 @@ async function enviarDocumentoPorId(to, { mediaId, filename, caption }){
 // Notificación al admin con fallback a plantilla (lead_alert_util con 5 parámetros)
 async function notificarAdmin({ name="Cliente", num, ticket, slot, texto="Nuevo contacto" }){
   if(!ADMIN_PHONE) return;
-
   const prefix = slot ? `[${slot}] ` : "";
   const body = `${prefix}#${ticket} — ${name}: ${texto}`;
 
-  // Intento 1: texto normal
   const ok = await enviarTexto(ADMIN_PHONE, body);
   if(ok) return;
 
-  // Intento 2: plantilla (funciona fuera de 24h)
   try {
     await waFetch("messages", {
       messaging_product: "whatsapp",
@@ -118,7 +114,7 @@ async function notificarAdmin({ name="Cliente", num, ticket, slot, texto="Nuevo 
 }
 
 /* ===== Tickets / Handoff / Slots ===== */
-const tickets = new Map();          // ticketId -> { num, name, handoff, slot, lastClientAt, lastAdminAt, unread, lastReminderAt, lastClientMsg }
+const tickets = new Map();          // ticketId -> { num, name, handoff, slot, lastClientAt, lastAdminAt, unread, lastReminderAt, pending: [{t,ts}] }
 const byNumber = new Map();
 const recent = [];
 const slots = new Map();            // slot -> ticketId
@@ -136,7 +132,7 @@ function ensureTicket(num, name, seedForId){
       handoff:false, slot:null,
       lastClientAt:0, lastAdminAt:0,
       unread:0, lastReminderAt:0,
-      lastClientMsg:""
+      pending:[]
     });
     byNumber.set(num, ticket);
     recent.unshift({ ticket, name: name||"Cliente" }); if(recent.length>20) recent.pop();
@@ -290,16 +286,24 @@ app.post("/webhook", async (req,res)=>{
       const t=texto.trim();
       let m;
 
+      // CHATS: lista de slots + todas las pendientes por slot (hasta CHATS_PENDING_MAX)
       if(/^chats?$/i.test(t)){
         const items=[...slots.keys()].sort((a,b)=>a-b).map(s=>{
           const tk=slots.get(s); const info=tickets.get(tk);
-          const pend = info?.unread ? ` [${info.unread}]` : "";
-          const pv = info?.unread ? ` — “${preview(info.lastClientMsg)}”` : "";
-          return `${s}) #${tk} — ${info?.name}${pend}${pv}`;
+          const count = info?.pending?.length || 0;
+          let lines = "";
+          if(count){
+            const max = Number(CHATS_PENDING_MAX);
+            const arr = info.pending.slice(-max); // últimas N sin responder
+            lines = "\n" + arr.map((p,i)=>`   ${i+1}) (${minutesAgo(p.ts)} min) “${preview(p.t, 160)}”`).join("\n");
+            if(info.pending.length > max) lines += `\n   …(${info.pending.length - max} más)`;
+          }
+          return `${s}) #${tk} — ${info?.name}${count?` [${count}]`: ""}${lines}`;
         }).join("\n") || "(sin chats en handoff)";
         return enviarTexto(from, `📒 Chats activos (slots):\n${items}\n\nResponde: *<slot> mensaje*  (ej. "3 Hola")`);
       }
 
+      // use <slot>  / use #ID
       if((m=t.match(/^use\s+(\d{1,2})$/i))){
         const s=parseInt(m[1],10);
         let tk=slots.get(s); if(!tk){ const item=recent[s-1]; if(item) tk=item.ticket; }
@@ -315,6 +319,7 @@ app.post("/webhook", async (req,res)=>{
         const inf=tickets.get(tk);
         return enviarTexto(from, `✅ Ticket activo: #${tk} — ${inf?.name}${inf?.handoff?" (handoff)":""}.`);
       }
+
       if(/^who$/i.test(t)){
         if(!adminCtx.activeTicket) return enviarTexto(from,"No hay ticket activo.");
         const tk=adminCtx.activeTicket; const inf=tickets.get(tk); const s=slotByTicket.get(tk);
@@ -337,19 +342,21 @@ app.post("/webhook", async (req,res)=>{
           await enviarTexto(info.num, MSG_CIERRE_MANUAL);
         }
 
-        info.handoff=false; info.unread=0; info.lastReminderAt=0;
+        info.handoff=false; info.unread=0; info.lastReminderAt=0; info.pending=[];
         freeSlot(tk);
 
         return enviarTexto(from, cmd==="end" ? `✅ Cerrado y bot reactivado para #${tk}.` : `🤖 Bot reactivado para #${tk}.`);
       }
 
+      // "N?" → detalle del slot con TODAS las pendientes
       if((m=t.match(/^(\d{1,2})\?$/))){
         const s=parseInt(m[1],10); const tk=slots.get(s);
         if(!tk) return enviarTexto(from,"Slot vacío.");
         const inf=tickets.get(tk);
-        const mins = inf?.lastClientAt ? Math.floor((Date.now()-inf.lastClientAt)/60000) : null;
-        const pv = inf?.unread ? `\n🗨️ Últ. pendiente (${mins} min): “${preview(inf.lastClientMsg)}”` : "";
-        return enviarTexto(from, `Slot ${s}: #${tk} — ${inf?.name}${inf?.unread?` • pendientes: ${inf.unread}`:""}${pv}`);
+        const count = inf?.pending?.length || 0;
+        if(!count) return enviarTexto(from, `Slot ${s}: #${tk} — ${inf?.name}\n(no hay pendientes)`);
+        const lines = inf.pending.map((p,i)=>`   ${i+1}) (${minutesAgo(p.ts)} min) “${preview(p.t, 220)}”`).join("\n");
+        return enviarTexto(from, `Slot ${s}: #${tk} — ${inf?.name} [${count}]\n${lines}`);
       }
 
       // Respuesta rápida: "<slot> mensaje"
@@ -358,7 +365,7 @@ app.post("/webhook", async (req,res)=>{
         const tk=slots.get(s); if(!tk) return enviarTexto(from,"Slot inválido.");
         const info=tickets.get(tk); const dest=info?.num; if(!dest) return enviarTexto(from,"Ticket inválido.");
         await enviarTexto(dest, body);
-        info.unread=0; info.lastReminderAt=0; info.lastAdminAt=Date.now();
+        info.unread=0; info.lastReminderAt=0; info.lastAdminAt=Date.now(); info.pending=[];
         return enviarTexto(from, `📨 Enviado a [${s}] #${tk}.`);
       }
 
@@ -367,28 +374,34 @@ app.post("/webhook", async (req,res)=>{
       if((mm=t.match(/^r\s+#([A-Z0-9]{4,8})\s+([\s\S]+)/i))){
         const tk=mm[1].toUpperCase(), body=mm[2]; const inf=tickets.get(tk); const dest=inf?.num;
         if(!dest) return enviarTexto(from,"Ticket inválido.");
-        await enviarTexto(dest,body); inf.unread=0; inf.lastReminderAt=0; inf.lastAdminAt=Date.now();
+        await enviarTexto(dest,body); inf.unread=0; inf.lastReminderAt=0; inf.lastAdminAt=Date.now(); inf.pending=[];
         return enviarTexto(from,`📨 Enviado a #${tk}.`);
       }
       if((mm=t.match(/^r\s+(\d{1,2})\s+([\s\S]+)/i))){
         const s=parseInt(mm[1],10), body=mm[2]; const tk=slots.get(s); const inf=tickets.get(tk); const dest=inf?.num;
         if(!dest) return enviarTexto(from,"Slot inválido.");
-        await enviarTexto(dest,body); inf.unread=0; inf.lastReminderAt=0; inf.lastAdminAt=Date.now();
+        await enviarTexto(dest,body); inf.unread=0; inf.lastReminderAt=0; inf.lastAdminAt=Date.now(); inf.pending=[];
         return enviarTexto(from,`📨 Enviado a [${s}] #${tk}.`);
       }
       if((mm=t.match(/^r\s+([\s\S]+)/i))){
         if(!adminCtx.activeTicket) return enviarTexto(from,"No hay ticket activo. Usa *chats* o *use <slot>*.");
         const inf=tickets.get(adminCtx.activeTicket); const dest=inf?.num; if(!dest) return enviarTexto(from,"Ticket inválido.");
-        await enviarTexto(dest, mm[1]); inf.unread=0; inf.lastReminderAt=0; inf.lastAdminAt=Date.now();
+        await enviarTexto(dest, mm[1]); inf.unread=0; inf.lastReminderAt=0; inf.lastAdminAt=Date.now(); inf.pending=[];
         return enviarTexto(from,`📨 Enviado a #${adminCtx.activeTicket}.`);
       }
 
       // Ayuda por defecto
       const items=[...slots.keys()].sort((a,b)=>a-b).map(s=>{
         const tk=slots.get(s); const info=tickets.get(tk);
-        const pend = info?.unread ? ` [${info.unread}]` : "";
-        const pv = info?.unread ? ` — “${preview(info.lastClientMsg)}”` : "";
-        return `${s}) #${tk} — ${info?.name}${pend}${pv}`;
+        const count = info?.pending?.length || 0;
+        let lines = "";
+        if(count){
+          const max = Number(CHATS_PENDING_MAX);
+          const arr = info.pending.slice(-max);
+          lines = "\n" + arr.map((p,i)=>`   ${i+1}) (${minutesAgo(p.ts)} min) “${preview(p.t, 160)}”`).join("\n");
+          if(info.pending.length > max) lines += `\n   …(${info.pending.length - max} más)`;
+        }
+        return `${s}) #${tk} — ${info?.name}${count?` [${count}]`: ""}${lines}`;
       }).join("\n") || "(sin chats en handoff)";
       return enviarTexto(from,
 `📒 Chats activos (slots):
@@ -396,8 +409,8 @@ ${items}
 
 Responder rápido:
 • *<slot> mensaje*   → ej. "3 Hola"
-• *3?*               → info del slot 3 (muestra último pendiente)
-• *chats*            → lista de slots con preview
+• *3?*               → info del slot 3 (todas las pendientes)
+• *chats*            → lista de slots con pendientes
 • *use <slot|#ID>*   → fijar activo
 • *r <slot|#ID> msg* / *r msg (activo)*
 
@@ -410,13 +423,16 @@ Cerrar o volver bot:
     const ticketId = ensureTicket(from, name, msg.id||from);
     const tInfo = tickets.get(ticketId);
 
-    // En handoff: bot en silencio; reenvía SIEMPRE al admin + guarda preview
+    // En handoff: bot en silencio; acumula pendientes y notifica
     if(tInfo?.handoff){
       const s = slotByTicket.get(ticketId) || assignSlot(ticketId);
       tInfo.lastClientAt = Date.now();
       tInfo.unread = (tInfo.unread||0) + 1;
-      tInfo.lastClientMsg = texto;
-      await notificarAdmin({ name, num: from, ticket: ticketId, slot: `S${s}`, texto });
+      tInfo.pending.push({ t: texto, ts: Date.now() });
+      // Construimos resumen multi-línea para el admin (limitado)
+      const arr = tInfo.pending.slice(-Number(REMIND_PENDING_MAX));
+      const listado = arr.map((p,i)=>`${arr.length>1?`${i+1}) `:""}“${preview(p.t, 120)}”`).join("\n");
+      await notificarAdmin({ name, num: from, ticket: ticketId, slot: `S${s}`, texto: listado || texto });
       return;
     }
 
@@ -440,19 +456,21 @@ Cerrar o volver bot:
     if(intent==="asesor"){
       tInfo.handoff = true;
       const slot = assignSlot(ticketId);
-      // guarda este primer mensaje como pendiente
+      // inicia pendientes con este primer mensaje
       tInfo.lastClientAt = Date.now();
       tInfo.unread = 1;
-      tInfo.lastClientMsg = texto;
+      tInfo.pending = [{ t: texto, ts: Date.now() }];
 
       const msj = enHorario
         ? "¡Perfecto! Te conecto con un asesor ahora mismo. 👨‍💼📲"
         : "Gracias por escribir. Un asesor te contactará en horario laboral. Puedo ayudarte por aquí mientras tanto. 🕗";
       await enviarTexto(from, msj);
 
+      const arr = tInfo.pending.slice(-Number(REMIND_PENDING_MAX));
+      const listado = arr.map((p,i)=>`${arr.length>1?`${i+1}) `:""}“${preview(p.t, 120)}”`).join("\n");
       await notificarAdmin({
         name, num: from, ticket: ticketId, slot: `S${slot}`,
-        texto: `🟢 Chat activado. Pendiente: “${preview(texto)}” • Responde con: *${slot} Tu mensaje*`
+        texto: `🟢 Chat activado.\n${listado || preview(texto)}\nResponde: *${slot} <texto>*`
       });
       return;
     }
@@ -474,10 +492,12 @@ setInterval(async ()=>{
       const mins = Math.floor((now - info.lastClientAt)/60000);
       if(mins >= Number(REMIND_AFTER_MIN) && now - (info.lastReminderAt||0) >= Number(REMIND_AFTER_MIN)*60000){
         const s = slotByTicket.get(tk) || assignSlot(tk);
-        const pv = preview(info.lastClientMsg);
+        // incluir varias pendientes (limitadas)
+        const arr = info.pending.slice(-Number(REMIND_PENDING_MAX));
+        const listado = arr.map((p,i)=>`${arr.length>1?`${i+1}) `:""}“${preview(p.t, 120)}” (${minutesAgo(p.ts)} min)`).join("\n");
         await notificarAdmin({
           name: info.name, num: info.num, ticket: tk, slot: `S${s}`,
-          texto: `⏰ Pendiente hace ${mins} min — “${pv}”. Responde: *${s} <texto>*  • Cerrar: *end ${s}*`
+          texto: `⏰ Pendientes:\n${listado}\nResponde: *${s} <texto>*  • Cerrar: *end ${s}*`
         });
         info.lastReminderAt = now;
       }
@@ -488,7 +508,7 @@ setInterval(async ()=>{
       const minsFromAdmin = Math.floor((now - info.lastAdminAt)/60000);
       if(minsFromAdmin >= Number(AUTO_CLOSE_MIN)){
         await enviarTexto(info.num, MSG_CIERRE_AUTO);
-        info.handoff = false; info.unread = 0; info.lastReminderAt = 0;
+        info.handoff = false; info.unread = 0; info.lastReminderAt = 0; info.pending = [];
         freeSlot(tk);
         await notificarAdmin({ name: info.name, num: info.num, ticket: tk, texto: `🔒 Cierre automático por inactividad (${minsFromAdmin} min)` });
       }
