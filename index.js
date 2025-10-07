@@ -1,4 +1,6 @@
-// index.js — Pro Campo Bot (simple + tickets cortos + chat activo sin escribir ticket cada vez)
+// index.js — Pro Campo Bot (keycaps en menú + precios con envío incluido + tickets cortos + chat activo)
+// Requiere: Node 18+ (fetch nativo). package.json con { "type": "module" }.
+
 import express from "express";
 
 const app = express();
@@ -75,13 +77,13 @@ async function enviarTexto(to, body) {
     return true;
   } catch (e) {
     console.error("WA TEXT ERR:", e.message);
-    // Si falla (p.ej. ventana 24 h cerrada) avisamos al admin
+    // Si falla (p.ej. ventana 24 h cerrada) avisamos al admin a modo informativo
     if (ADMIN_PHONE && to !== ADMIN_PHONE) {
       try { await waFetch("messages", {
         messaging_product: "whatsapp",
         to: ADMIN_PHONE,
         type: "text",
-        text: { body: "⚠️ No se pudo entregar el mensaje (ventana 24 h cerrada)." }
+        text: { body: "⚠️ No se pudo entregar un mensaje al cliente (ventana 24 h cerrada)." }
       }); } catch {}
     }
     return false;
@@ -155,34 +157,35 @@ const MSG_PRECIOS_KHUMIC =
 • *Promo 25 kg (incluye envío):* $226.98
 • *Promo 50 kg (incluye envío):* $436.50
 
-📦 Envíos a todo Ecuador.
-Escribe *asesor* para comprar o *ficha 100* para la ficha técnica.`;
+🚚 *Estas promociones incluyen el envío.*
+ℹ️ *Nota:* sujeto a disponibilidad logística y rutas de entrega.`;
 
 const MSG_PRECIOS_SEAWEED =
 `💰 *Precios y promociones de Khumic – Seaweed 800*
 • *1 kg:* $15.87
 • *Promo 3 kg (incluye envío):* $39.68
 
-📦 Envíos a todo Ecuador.
-Escribe *ficha seaweed* para la ficha técnica o *asesor* para atención.`;
+🚚 *Estas promociones incluyen el envío.*
+ℹ️ *Nota:* sujeto a disponibilidad logística y rutas de entrega.`;
 
 /* =================== Menú / intents =================== */
+// 👉 Keycaps en el panel principal
 function menuPrincipal(enHorario) {
   const saludo =
-    `🤖🌱 *¡Hola! Soy ${BOT_NAME.toUpperCase()}* y estoy aquí para ayudarte.\n` +
-    "Elige una opción escribiendo el número:\n\n";
-  const nota = enHorario ? "" :
-    "_Fuera de horario: puedo darte info y dejamos la *compra* para el horario laboral (L–V 08:00–17:30, Sáb 08:00–13:00)._ \n\n";
+    `🤖🌱 *¡Hola! Soy ${BOT_NAME.toUpperCase()}* y estoy aquí para ayudarte.\n`;
+  const nota = enHorario
+    ? ""
+    : "_Fuera de horario: puedo darte info y dejamos la *compra* para el horario laboral (L–V 08:00–17:30, Sáb 08:00–13:00)._ \n\n";
   return (
     saludo + nota +
-    "1) Precios y promociones de *Khumic-100*\n" +
-    "2) Precios y promociones de *Khumic – Seaweed 800*\n" +
-    "3) Beneficios de Khumic-100\n" +
-    "4) Beneficios de Khumic – Seaweed 800\n" +
-    "5) Envíos y cómo encontrarnos\n" +
-    "6) *Fichas técnicas (PDF)*\n" +
-    "7) Hablar con un asesor 👨‍💼\n" +
-    "0) Volver al inicio"
+    "1️⃣ Precios y promociones de *Khumic-100* (ácidos húmicos + fúlvicos)\n" +
+    "2️⃣ Precios y promociones de *Khumic – Seaweed 800* (algas marinas)\n" +
+    "3️⃣ Beneficios de *Khumic-100* (ácidos húmicos + fúlvicos)\n" +
+    "4️⃣ Beneficios de *Khumic – Seaweed 800* (algas marinas)\n" +
+    "5️⃣ Envíos y cómo encontrarnos\n" +
+    "6️⃣ *Fichas técnicas (PDF)*\n" +
+    "7️⃣ Hablar con un asesor 👨‍💼\n" +
+    "0️⃣ Volver al inicio"
   );
 }
 const menuFichas =
@@ -273,10 +276,10 @@ app.post("/webhook", async (req, res) => {
       // Con ticket activo: cualquier texto se reenvía al cliente
       if (adminCtx.activeTicket) {
         const tk = adminCtx.activeTicket;
-        const { num, name } = tickets.get(tk) || {};
+        const { num } = tickets.get(tk) || {};
         if (!num) return enviarTexto(from, "Ticket inválido. Usa *leads* / *use #ID*.");
         await enviarTexto(num, t);
-        return; // también podríamos eco al admin, pero no es necesario
+        return;
       }
 
       // Sin ticket activo: mostrar ayuda
@@ -297,11 +300,18 @@ app.post("/webhook", async (req, res) => {
     if (intent === "op1") return enviarTexto(from, MSG_PRECIOS_KHUMIC);
     if (intent === "op2") return enviarTexto(from, MSG_PRECIOS_SEAWEED);
     if (intent === "op3")
-      return enviarTexto(from, "🌿 Beneficios de Khumic-100:\n• Mejora suelo y retención de agua.\n• Aumenta disponibilidad de nutrientes.\n• Estimula raíces y microvida.");
+      return enviarTexto(from, "🌿 *Beneficios de Khumic-100*\n• Mejora suelo y retención de agua.\n• Aumenta disponibilidad de nutrientes.\n• Estimula raíces y microvida.");
     if (intent === "op4")
-      return enviarTexto(from, "🌊 Beneficios de Seaweed 800:\n• Bioestimulante de algas.\n• Mejor brotación y amarre.\n• Mayor tolerancia al estrés.");
+      return enviarTexto(from, "🌊 *Beneficios de Seaweed 800*\n• Bioestimulante de algas.\n• Mejor brotación y amarre.\n• Mayor tolerancia al estrés.");
     if (intent === "op5")
-      return enviarTexto(from, "🚚 Envíos en Ecuador. Dime tu *ciudad* para calcular costo y tiempo.\nHorario: L–V 08:00–17:30, Sáb 08:00–13:00.");
+      return enviarTexto(
+        from,
+        "📍 *Ubicación y envíos*\n" +
+        "• Contamos con *bodega de importación en Ibarra*. Actualmente *no tenemos atención al cliente* en sitio.\n" +
+        "• Realizamos *despachos en grandes cantidades* como *distribuidor*, *con previo aviso*.\n" +
+        "• Por eso varias de nuestras *promociones ya incluyen el envío* 🚚.\n\n" +
+        "Dime tu *ciudad* y el producto que te interesa para confirmarte disponibilidad, tiempos y costo (si aplica)."
+      );
     if (intent === "menu_fichas") return enviarTexto(from, menuFichas());
     if (intent === "ficha_khumic")
       return enviarDocumentoPorId(from, { mediaId: KHUMIC_PDF_ID, filename: "Khumic-100-ficha.pdf", caption: "📄 Ficha Khumic-100." });
@@ -318,7 +328,7 @@ app.post("/webhook", async (req, res) => {
       const tk = ensureTicket(from, name, msg.id || from);
       adminCtx.activeTicket = tk;
 
-      // Aviso corto al admin (SIN hello_world)
+      // Aviso corto al admin (solo ticket corto)
       if (ADMIN_PHONE) {
         await enviarTexto(
           ADMIN_PHONE,
@@ -338,4 +348,3 @@ app.post("/webhook", async (req, res) => {
 /* =================== Healthcheck =================== */
 app.get("/", (_req, res) => res.send("OK"));
 app.listen(PORT, () => console.log(`Bot listo en puerto ${PORT}`));
-
