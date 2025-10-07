@@ -1,4 +1,4 @@
-// index.js — Pro Campo Bot (mejoras de intent + modo respuesta admin con "r")
+// index.js — Pro Campo Bot (handoff por ticket + multi-chat limpio)
 // - Saludo PRO-CAMPO BOT + keycaps
 // - Precios con envío incluido
 // - Envíos: Cita Express + QR/URL de rastreo
@@ -6,8 +6,9 @@
 // - Footer en cada apartado (7 asesor / 0 inicio)
 // - LINKS (opción 8)
 // - Tickets cortos
-// - NUEVO: Parser de números en frases ("deme 1 por favor") y palabras (uno, dos...)
-// - NUEVO: Mensajes del admin SOLO se envían con comando "r ..."
+// - Parser de “deme 1 por favor” y uno/dos/…
+// - NUEVO: handoff (silencio del bot) hasta que el admin quite el hold con "bot ..."
+// - NUEVO: reenvío de TODOS los mensajes en handoff al admin (no solo del activo)
 
 import express from "express";
 const app = express();
@@ -105,7 +106,7 @@ async function enviarDocumentoPorId(to, { mediaId, filename, caption }) {
 }
 
 /* ========== Tickets & Chat ========== */
-const tickets = new Map();     // ticketId -> { num, name }
+const tickets = new Map();     // ticketId -> { num, name, handoff: bool }
 const byNumber = new Map();    // num -> ticketId
 const recent = [];             // últimos tickets
 const adminCtx = { activeTicket: null }; // ticket activo del admin
@@ -116,7 +117,7 @@ function ensureTicket(num, name, seedForId) {
     ticket = shortTicket(seedForId || num);
     let iter = 0;
     while (tickets.has(ticket)) ticket = shortTicket(ticket + (++iter));
-    tickets.set(ticket, { num, name: name || "Cliente" });
+    tickets.set(ticket, { num, name: name || "Cliente", handoff: false });
     byNumber.set(num, ticket);
     recent.unshift({ ticket, name: name || "Cliente" });
     if (recent.length > 10) recent.pop();
@@ -142,12 +143,14 @@ Comandos:
 • *who*               → ver ticket activo
 • *stop*              → desactivar ticket activo
 
-Enviar mensajes (solo con 'r'):
+Responder (no se envía nada si no usas 'r'):
 • *r Hola*            → responde al ticket activo
 • *r #ABC123 Hola*    → responde a ese ticket
 • *r 1 Hola*          → responde al índice 1
 
-(Escribe 'r ...' para enviarlo. Si no usas 'r', no se manda al cliente.)`
+Handoff (bot silencioso):
+• *bot*               → quitar handoff al ticket activo (vuelve el bot)
+• *bot #ABC123* / *bot 1* → quitar handoff a ese ticket`
   );
 }
 
@@ -223,7 +226,7 @@ const MSG_ENVIOS = withFooter(
 • Bodega de importación en *Ibarra* (sin atención al público).
 • *Despachos* como *distribuidor*, *con previo aviso*.
 • Varias *promociones incluyen el envío* 🚚.
-• Operador: *Cita Express* + *QR/URL de rastreo* para seguir tu paquete (transparencia total).`
+• Operador: *Cita Express* + *QR/URL de rastreo* (transparencia total).`
 );
 
 const MSG_FICHAS = withFooter(
@@ -259,9 +262,8 @@ function menuPrincipal(enHorario) {
   );
 }
 
-// NUEVO: detectar número dentro de frases y palabras (uno… ocho)
 function detectarNumeroEnFrase(t) {
-  const m = t.match(/(?:^|\D)([0-8])(?:\D|$)/); // captura 0..8 como token
+  const m = t.match(/(?:^|\D)([0-8])(?:\D|$)/);
   if (m) return m[1];
   const map = { cero:"0", uno:"1", dos:"2", tres:"3", cuatro:"4", cinco:"5", seis:"6", siete:"7", ocho:"8" };
   for (const [w,n] of Object.entries(map)) {
@@ -273,17 +275,13 @@ function detectarNumeroEnFrase(t) {
 function detectarIntent(texto) {
   const t = normalizar(texto);
 
-  // comandos admin se manejan aparte (en handler del admin)
   if (/^(help|ayuda)$/i.test(t)) return "help";
-
-  // primero detectar fichas/asesor directos
   if (/^7$/.test(t) || /asesor|agente|humano|contactar/i.test(t)) return "asesor";
   if (/^6$/.test(t) || /^fichas?$/i.test(t)) return "menu_fichas";
   if (/\bficha\b/.test(t) && /\b(100|khumic|humic)\b/.test(t)) return "ficha_khumic";
   if (/\bficha\b/.test(t) && /\b(seaweed|800|algas)\b/.test(t)) return "ficha_seaweed";
   if (/^8$/.test(t) || /web|sitio|redes|facebook|tiktok/i.test(t)) return "links";
 
-  // número dentro de la frase
   const num = detectarNumeroEnFrase(t);
   if (num !== null) {
     if (num === "0") return "inicio";
@@ -297,12 +295,8 @@ function detectarIntent(texto) {
     if (num === "8") return "links";
   }
 
-  // palabras clave de inicio
   if (/^(hola|buen[oa]s?|menu|men[uú]|inicio|start|0)$/i.test(t)) return "inicio";
-
-  // gracias
   if (/gracias|muchas gracias|mil gracias|thank/i.test(t)) return "gracias";
-
   return "fallback";
 }
 
@@ -333,36 +327,51 @@ app.post("/webhook", async (req, res) => {
     /* ====== ADMIN (tu número) ====== */
     if (ADMIN_PHONE && from === ADMIN_PHONE) {
       const t = texto.trim();
-
-      // comandos
       let m;
+
       if (/^leads$/i.test(t)) {
-        const list = recent.slice(0,5).map((x,i)=>`${i+1}) #${x.ticket} — ${x.name}`).join("\n") || "(vacío)";
+        const list = recent.slice(0,5).map((x,i)=>`${i+1}) #${x.ticket} — ${x.name}${tickets.get(x.ticket)?.handoff ? " (handoff)" : ""}`).join("\n") || "(vacío)";
         return enviarTexto(from, `📒 Últimos tickets:\n${list}\n\nUsa *use #ABC123* o *use 1*`);
       }
       if ((m = t.match(/^use\s+#([A-Z0-9]{4,8})$/i))) {
         const tk = m[1].toUpperCase();
         if (!tickets.has(tk)) return enviarTexto(from, `No encuentro #${tk}. Usa *leads*.`);
         adminCtx.activeTicket = tk;
-        const { name } = tickets.get(tk);
-        return enviarTexto(from, `✅ Ticket activo: #${tk} — ${name}. Usa *r mensaje* para responder.`);
+        const { name, handoff } = tickets.get(tk);
+        return enviarTexto(from, `✅ Ticket activo: #${tk} — ${name}${handoff ? " (handoff)" : ""}. Usa *r mensaje* para responder.`);
       }
       if ((m = t.match(/^use\s+(\d{1,2})$/i))) {
         const idx = parseInt(m[1], 10) - 1;
         const item = recent[idx];
         if (!item) return enviarTexto(from, "Índice inválido. Usa *leads*.");
         adminCtx.activeTicket = item.ticket;
-        return enviarTexto(from, `✅ Ticket activo: #${item.ticket} — ${item.name}. Usa *r mensaje* para responder.`);
+        const { name, handoff } = tickets.get(item.ticket);
+        return enviarTexto(from, `✅ Ticket activo: #${item.ticket} — ${name}${handoff ? " (handoff)" : ""}. Usa *r mensaje* para responder.`);
       }
       if (/^who$/i.test(t)) {
         if (!adminCtx.activeTicket) return enviarTexto(from, "No hay ticket activo. Usa *leads* / *use #ID*.");
         const tk = adminCtx.activeTicket;
-        const { name } = tickets.get(tk) || {};
-        return enviarTexto(from, `🎯 Ticket activo: #${tk} — ${name}`);
+        const { name, handoff } = tickets.get(tk) || {};
+        return enviarTexto(from, `🎯 Ticket activo: #${tk} — ${name}${handoff ? " (handoff)" : ""}`);
       }
       if (/^stop$/i.test(t)) {
         adminCtx.activeTicket = null;
         return enviarTexto(from, "✋ Chat desactivado.");
+      }
+
+      // Quitar handoff (deja que el bot vuelva a responder)
+      if ((m = t.match(/^bot(?:\s+#([A-Z0-9]{4,8})|\s+(\d{1,2}))?$/i))) {
+        let tk = null;
+        if (m[1]) tk = m[1].toUpperCase();
+        else if (m[2]) {
+          const idx = parseInt(m[2], 10) - 1;
+          const item = recent[idx];
+          if (item) tk = item.ticket;
+        } else tk = adminCtx.activeTicket;
+
+        if (!tk || !tickets.has(tk)) return enviarTexto(from, "No encuentro el ticket. Usa *leads*.");
+        tickets.get(tk).handoff = false;
+        return enviarTexto(from, `🤖 Bot reactivado para #${tk}.`);
       }
 
       // RESPUESTAS con prefijo "r"
@@ -390,19 +399,20 @@ app.post("/webhook", async (req, res) => {
         return enviarTexto(from, `📨 Enviado a #${adminCtx.activeTicket}.`);
       }
 
-      // ayuda por defecto
       return enviarTexto(from, adminHelp());
     }
 
     /* ====== CLIENTE ====== */
     const ticketId = ensureTicket(from, name, msg.id || from);
+    const tInfo = tickets.get(ticketId);
 
-    // si admin tiene activo ese ticket, reenvía SOLO del cliente→admin (para que leas)
-    if (ADMIN_PHONE && adminCtx.activeTicket === ticketId) {
-      await enviarTexto(ADMIN_PHONE, `[#${ticketId}] ${name}: ${texto}`);
+    // Si el ticket está en handoff: bot en silencio; reenvía SIEMPRE al admin
+    if (tInfo?.handoff) {
+      if (ADMIN_PHONE) await enviarTexto(ADMIN_PHONE, `📩 [#${ticketId}] ${name}: ${texto}`);
+      return; // no responder al cliente
     }
 
-    // Flujo normal del bot
+    // Flujo normal del bot (cuando NO está en handoff)
     const intent = detectarIntent(texto);
     const enHorario = esHorarioLaboral();
 
@@ -420,18 +430,19 @@ app.post("/webhook", async (req, res) => {
       return enviarDocumentoPorId(from, { mediaId: SEAWEED_PDF_ID, filename: "Seaweed-800-ficha.pdf", caption: "📄 Ficha Seaweed 800." });
 
     if (intent === "asesor") {
+      // activar handoff
+      tInfo.handoff = true;
       const msj = enHorario
         ? "¡Perfecto! Te conecto con un asesor ahora mismo. 👨‍💼📲"
         : "Gracias por escribir. Un asesor te contactará en horario laboral. Puedo ayudarte por aquí mientras tanto. 🕗";
       await enviarTexto(from, msj);
 
-      // activar ticket para el admin (solo lectura hasta que use 'r ...')
+      // notifica al admin y fija como activo para comodidad
       adminCtx.activeTicket = ticketId;
-
       if (ADMIN_PHONE) {
         await enviarTexto(
           ADMIN_PHONE,
-          `🟢 Chat activado #${ticketId}\nCliente: ${name}\nUsa: *r mensaje* (al activo), *r #ID msg*, *r 1 msg*, *leads*, *use #ID*`
+          `🟢 Chat activado (handoff) #${ticketId}\nCliente: ${name}\nUsa: *r #${ticketId} mensaje* o *r mensaje* (si es el activo).\nPara reactivar el bot: *bot #${ticketId}*`
         );
       }
       return;
@@ -447,4 +458,5 @@ app.post("/webhook", async (req, res) => {
 /* ========== Healthcheck ========== */
 app.get("/", (_req, res) => res.send("OK"));
 app.listen(PORT, () => console.log(`Bot listo en puerto ${PORT}`));
+
 
