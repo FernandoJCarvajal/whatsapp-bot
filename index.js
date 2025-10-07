@@ -79,53 +79,58 @@ async function enviarTexto(to, body) {
     console.error("WA TEXT ERR:", e.message);
     return false;
   }
+  
 }
-
-// ⚠️ Para el admin: intenta texto y si falla usa plantilla (sirve fuera de 24 h)
+// Envía notificación al admin. Primero intenta texto normal;
+// si falla (p. ej. fuera de 24h), usa plantilla como fallback.
+// Con hello_world (en_US) no manda parámetros; con otras plantillas sí.
 async function notificarAdmin({ name = "Cliente", num, ticket, slot, texto = "Nuevo contacto" }) {
   if (!ADMIN_PHONE) return;
+
   const prefix = slot ? `[${slot}] ` : "";
   const body = `${prefix}#${ticket} — ${name}: ${texto}`;
+
+  // 1) Intento por texto normal
   const ok = await enviarTexto(ADMIN_PHONE, body);
   if (ok) return;
 
+  // 2) Fallback por plantilla
   try {
-    await waFetch("messages", {
+    const templateName = (ADMIN_TEMPLATE || "hello_world").trim();
+    const isHelloWorld = /^hello_world$/i.test(templateName);
+
+    // Base payload
+    const payload = {
       messaging_product: "whatsapp",
       to: ADMIN_PHONE,
       type: "template",
       template: {
-        name: ADMIN_TEMPLATE,
-        language: { code: "es" },
-        components: [{
-          type: "body",
-          parameters: [
-            { type: "text", text: DISPLAY_BOT_NAME }, // {{1}}
-            { type: "text", text: name },             // {{2}}
-            { type: "text", text: `+${num}` },        // {{3}}
-            { type: "text", text: `#${ticket}` },     // {{4}}
-            { type: "text", text: texto },            // {{5}}
-          ],
-        }],
-      },
-    });
+        name: templateName,
+        // hello_world es en-US; otras normalmente "es"
+        language: { code: isHelloWorld ? "en_US" : "es" }
+      }
+    };
+
+    // Si NO es hello_world, agregamos variables del cuerpo
+    if (!isHelloWorld) {
+      payload.template.components = [{
+        type: "body",
+        parameters: [
+          { type: "text", text: DISPLAY_BOT_NAME }, // {{1}}
+          { type: "text", text: name },             // {{2}}
+          { type: "text", text: `+${num}` },        // {{3}}
+          { type: "text", text: `#${ticket}` },     // {{4}}
+          { type: "text", text: texto },            // {{5}}
+        ],
+      }];
+    }
+
+    await waFetch("messages", payload);
   } catch (e) {
     console.error("WA TEMPLATE ERR:", e.message);
   }
 }
 
-async function enviarDocumentoPorId(to, { mediaId, filename, caption }) {
-  if (!mediaId) return enviarTexto(to, "No encuentro la ficha ahora. Intenta en unos minutos 🙏");
-  try {
-    await waFetch("messages", {
-      messaging_product: "whatsapp",
-      to, type: "document",
-      document: { id: mediaId, filename, caption },
-    });
-  } catch (e) {
-    console.error("WA DOC ERR:", e.message);
-  }
-}
 
 /* ========== Tickets, Handoff y SLOTS ========== */
 const tickets = new Map();          // ticketId -> { num, name, handoff, slot, lastClientAt, unread, lastReminderAt }
