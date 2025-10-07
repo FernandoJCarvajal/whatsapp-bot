@@ -1,5 +1,5 @@
-// index.js — Pro Campo Bot (keycaps en menú + precios con envío incluido + tickets cortos + chat activo)
-// Requiere: Node 18+ (fetch nativo). package.json con { "type": "module" }.
+// index.js — Pro Campo Bot (keycaps + saludo mejorado + precios con envío incluido + tickets cortos + chat activo)
+// Requiere Node 18+ (fetch nativo) y package.json con { "type": "module" }.
 
 import express from "express";
 
@@ -17,6 +17,9 @@ const {
   BOT_NAME = "PRO CAMPO BOT",
   ADMIN_PHONE, // 5939XXXXXXXX (sin +)
 } = process.env;
+
+// Nombre a mostrar en el saludo (con guion)
+const DISPLAY_BOT_NAME = "PRO-CAMPO BOT";
 
 /* =================== Utils =================== */
 const mask = s => (s ? s.slice(0, 4) + "***" : "MISSING");
@@ -169,10 +172,11 @@ const MSG_PRECIOS_SEAWEED =
 ℹ️ *Nota:* sujeto a disponibilidad logística y rutas de entrega.`;
 
 /* =================== Menú / intents =================== */
-// 👉 Keycaps en el panel principal
+// 👉 Saludo mejorado (PRO-CAMPO BOT + emojis + instrucción + espacio antes del listado)
 function menuPrincipal(enHorario) {
   const saludo =
-    `🤖🌱 *¡Hola! Soy ${BOT_NAME.toUpperCase()}* y estoy aquí para ayudarte.\n`;
+    `🤖🌱✨ *¡Hola! Soy ${DISPLAY_BOT_NAME}* — *estoy aquí para ayudarte* 🤝🌟💬🧑‍🌾.\n` +
+    "➡️ *Para seleccionar la opción, responde con el número de lo que necesitas conocer.*\n\n";
   const nota = enHorario
     ? ""
     : "_Fuera de horario: puedo darte info y dejamos la *compra* para el horario laboral (L–V 08:00–17:30, Sáb 08:00–13:00)._ \n\n";
@@ -348,3 +352,4 @@ app.post("/webhook", async (req, res) => {
 /* =================== Healthcheck =================== */
 app.get("/", (_req, res) => res.send("OK"));
 app.listen(PORT, () => console.log(`Bot listo en puerto ${PORT}`));
+
