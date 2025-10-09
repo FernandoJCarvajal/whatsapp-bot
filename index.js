@@ -206,7 +206,7 @@ const MSG_BENEFICIOS_SEAWEED = withFooter(
 const MSG_ENVIOS = withFooter(
 `📍 *Ubicación y envíos*
 • Bodega de importación en *Ibarra* (sin atención al público).
-• *Despachos* como *distribuidor*, *con previo aviso*.
+• *Despachos* a *mayorista*, *con previo aviso*.
 • Varias *promociones incluyen el envío* 🚚.
 • Operador: *Cita Express* + *QR/URL de rastreo* (transparencia total).`
 );
