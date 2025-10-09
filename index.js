@@ -222,7 +222,7 @@ const MSG_LINKS = withFooter(
 
 // Mensajes de cierre
 const MSG_CIERRE_AUTO   = "⏳ Cerramos este chat por *falta de respuesta*. Si deseas retomar tu pedido, responde *7* para contactar a un asesor. ¡Gracias por preferirnos! 🌱";
-const MSG_CIERRE_MANUAL = "🙏 *Gracias por preferirnos*. Si necesitas más ayuda, responde *7* para contactar de nuevo a un asesor. ¡Estamos para ayudarte!";
+const MSG_CIERRE_MANUAL = " *Gracias por preferirnos*. Si necesitas más ayuda, responde *7* para contactar de nuevo a un asesor. ¡Estamos para ayudarte!";
 
 /* ===== Menú / Intents ===== */
 function menuPrincipal(enHorario){
@@ -237,8 +237,8 @@ function menuPrincipal(enHorario){
     "4️⃣ Beneficios de *Khumic – Seaweed 800* (algas marinas)\n" +
     "5️⃣ Envíos y cómo encontrarnos\n" +
     "6️⃣ *Fichas técnicas (PDF)*\n" +
-    "7️⃣ Hablar con un asesor 👨‍💼\n" +
-    "8️⃣ Sitio web y redes sociales 🌐\n" +
+    "7️⃣ Hablar con un asesor \n" +
+    "8️⃣ Sitio web y redes sociales \n" +
     "0️⃣ Volver al inicio";
 }
 function detectarNumeroEnFrase(t){
