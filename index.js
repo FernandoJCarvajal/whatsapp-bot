@@ -227,7 +227,7 @@ const MSG_CIERRE_MANUAL = " *Gracias por preferirnos*. Si necesitas más ayuda, 
 /* ===== Menú / Intents ===== */
 function menuPrincipal(enHorario){
   const saludo =
-    `🤖🌱 *¡Hola! Soy ${DISPLAY_BOT_NAME}* — *estoy aquí para ayudarte* 🤝🧑‍🌾.\n` +
+    `🌱 *¡Hola! Soy ${DISPLAY_BOT_NAME}* 🤖 *estoy aquí para ayudarte* 🤝🧑‍🌾.\n` +
     "➡️ *Para seleccionar la opción, responde con el número de lo que necesitas conocer.*\n\n";
   const nota = enHorario ? "" : "_Fuera de horario: puedo darte info y dejamos la *compra* para el horario laboral (L–V 08:00–17:30, Sáb 08:00–13:00)._ \n\n";
   return saludo + nota +
