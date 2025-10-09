@@ -114,11 +114,11 @@ async function notificarAdmin({ name="Cliente", num, ticket, slot, texto="Nuevo 
 }
 
 /* ===== Tickets / Handoff / Slots ===== */
-const tickets = new Map();
+const tickets = new Map();          // ticketId -> info
 const byNumber = new Map();
 const recent = [];
-const slots = new Map();
-const slotByTicket = new Map();
+const slots = new Map();            // slot -> ticketId
+const slotByTicket = new Map();     // ticketId -> slot
 const MAX_SLOTS = 20;
 const adminCtx = { activeTicket: null };
 
@@ -154,7 +154,7 @@ function freeSlot(ticketId){
 }
 
 /* ===== Contenidos ===== */
-// (Actualizado footer: ahora 8 = asesor)
+// Footer con 8 = asesor (cambio)
 function withFooter(txt){
   return txt + "\n\n➡️ *Para continuar*, responde con el número:\n• 8️⃣ Hablar con un asesor\n• 0️⃣ Volver al inicio";
 }
@@ -180,7 +180,7 @@ const MSG_PRECIOS_SEAWEED = withFooter(
 );
 
 const GUIA_USO =
-`\n\n🧪 *Guía rápida de uso (referencia general)*\n• *Dosis general:* 3–4 kg/ha/mes.\n• *Recomendación:* dividir en *2 aplicaciones* cada *15 días*.\n• *Tanque 200 L:* *500 gr* cada *15 días*.\n• *Por volumen de agua:* *2,5–3,5 g/L*.\n• *Vías:* edáfico/fertirriego y foliar.\n • 🚫 Evita aplicar por vía foliar en cultivos delicados (como rosas 🌹) ya que podrían generar manchas superficiales. \n • Ajustar según cultivo/etapa; *prueba de compatibilidad* antes de mezclar.`;
+`\n\n🧪 *Guía rápida de uso (referencia general)*\n• *Dosis general:* 3–4 kg/ha/mes.\n• *Recomendación:* dividir en *2 aplicaciones* cada *15 días*.\n• *Tanque 200 L:* *500 gr* cada *15 días*.\n• *Por volumen de agua:* *2,5–3,5 g/L*.\n• *Vías:* edáfico/fertirriego y foliar.\n • 🚫 Evita aplicar por vía foliar en cultivos delicados (como rosas 🌹) ya que podrían generar manchas superficiales.\n • Ajustar según cultivo/etapa; *prueba de compatibilidad* antes de mezclar.`;
 
 const MSG_BENEFICIOS_KHUMIC = withFooter(
 `🌿 *Beneficios de Khumic-100* (ácidos húmicos + fúlvicos)
@@ -214,7 +214,7 @@ const MSG_ENVIOS = withFooter(
 • Operador: *Cita Express* + *QR/URL de rastreo* (transparencia total).`
 );
 
-// (Este texto ya no se usa al presionar 6, pero lo dejamos por si alguien escribe "fichas")
+// Texto informativo si alguien escribe "fichas" (aunque con 6 ya se envían directo)
 const MSG_FICHAS = withFooter("📑 *Fichas técnicas disponibles*\nEscribe:\n\n• *ficha 100* → Khumic-100\n• *ficha seaweed* → Seaweed 800");
 
 const MSG_LINKS = withFooter(
@@ -226,9 +226,9 @@ const MSG_LINKS = withFooter(
 
 // Mensajes de cierre
 const MSG_CIERRE_AUTO   = "⏳ Cerramos este chat por *falta de respuesta*. Si deseas retomar tu pedido, responde *8* para contactar a un asesor. ¡Gracias por preferirnos! 🌱";
-const MSG_CIERRE_MANUAL = " *Gracias por preferirnos*. Si necesitas más ayuda, responde *8* para contactar de nuevo a un asesor. ¡Estamos para ayudarte!*";
+const MSG_CIERRE_MANUAL = " *Gracias por preferirnos*. Si necesitas más ayuda, responde *8* para contactar de nuevo a un asesor. ¡Estamos para ayudarte!";
 
-/* ===== Menú / Intents ===== */
+/* ===== Menús (con y sin saludo) ===== */
 function menuPrincipal(enHorario){
   const saludo =
     `🌱 *¡Hola! Soy ${DISPLAY_BOT_NAME}* 🤖 *estoy aquí para ayudarte* 🤝🧑‍🌾.\n` +
@@ -241,10 +241,25 @@ function menuPrincipal(enHorario){
     "4️⃣ Beneficios de *Khumic – Seaweed 800* (algas marinas)\n" +
     "5️⃣ Envíos y cómo encontrarnos\n" +
     "6️⃣ *Fichas técnicas (PDF)*\n" +
-    "7️⃣ Sitio web y redes sociales \n" +     // <— cambiado
-    "8️⃣ Hablar con un asesor \n" +            // <— cambiado
+    "7️⃣ Sitio web y redes sociales \n" +
+    "8️⃣ Hablar con un asesor \n" +
     "0️⃣ Volver al inicio";
 }
+function menuSoloOpciones(enHorario){
+  const nota = enHorario ? "" : "_Fuera de horario: puedo darte info y dejamos la *compra* para el horario laboral (L–V 08:00–17:30, Sáb 08:00–13:00)._ \n\n";
+  return nota +
+    "1️⃣ Precios y promociones de *Khumic-100* (ácidos húmicos + fúlvicos)\n" +
+    "2️⃣ Precios y promociones de *Khumic – Seaweed 800* (algas marinas)\n" +
+    "3️⃣ Beneficios de *Khumic-100* (ácidos húmicos + fúlvicos)\n" +
+    "4️⃣ Beneficios de *Khumic – Seaweed 800* (algas marinas)\n" +
+    "5️⃣ Envíos y cómo encontrarnos\n" +
+    "6️⃣ *Fichas técnicas (PDF)*\n" +
+    "7️⃣ Sitio web y redes sociales \n" +
+    "8️⃣ Hablar con un asesor \n" +
+    "0️⃣ Volver al inicio";
+}
+
+/* ===== Intents ===== */
 function detectarNumeroEnFrase(t){
   const m = t.match(/(?:^|\D)([0-8])(?:\D|$)/); if(m) return m[1];
   const map={cero:"0",uno:"1",dos:"2",tres:"3",cuatro:"4",cinco:"5",seis:"6",siete:"7",ocho:"8"};
@@ -255,7 +270,7 @@ function detectarIntent(texto){
   const t = normalizar(texto);
   // 8 => asesor (cambio)
   if (/^8$/.test(t) || /asesor|agente|humano|contactar|comprar|necesito comprar/i.test(t)) return "asesor";
-  // 6 => fichas (pero ahora envía directo ambos PDFs)
+  // 6 => fichas (envía directo ambos PDFs)
   if (/^6$/.test(t) || /^fichas?$/i.test(t)) return "menu_fichas";
   // accesos directos por texto
   if (/\bficha\b/.test(t) && /\b(100|khumic|humic)\b/.test(t)) return "ficha_khumic";
@@ -268,11 +283,11 @@ function detectarIntent(texto){
     return ({
       0:"inicio",1:"op1",2:"op2",3:"op3",4:"op4",5:"op5",
       6:"menu_fichas",
-      7:"links",     // <— cambiado
-      8:"asesor"     // <— cambiado
+      7:"links",     // cambiado
+      8:"asesor"     // cambiado
     })[num];
   }
-  if (/^(hola|buen[oa]s?|menu|men[uú]|inicio|start|0)$/i.test(t)) return "inicio";
+  if (/^(hola|buen[oa]s?|menu|men[uú]|inicio|start)$/i.test(t)) return "inicio";
   if (/gracias|muchas gracias|mil gracias|thank/i.test(t)) return "gracias";
   return "fallback";
 }
@@ -303,7 +318,7 @@ app.post("/webhook", async (req,res)=>{
       const t=texto.trim();
       let m;
 
-      // CHATS
+      // CHATS: lista de slots + pendientes
       if(/^chats?$/i.test(t)){
         const items=[...slots.keys()].sort((a,b)=>a-b).map(s=>{
           const tk=slots.get(s); const info=tickets.get(tk);
@@ -344,7 +359,7 @@ app.post("/webhook", async (req,res)=>{
       }
       if(/^stop$/i.test(t)){ adminCtx.activeTicket=null; return enviarTexto(from,"✋ Chat desactivado."); }
 
-      // bot / end
+      // bot / end (liberan handoff)
       if((m=t.match(/^(bot|end)(?:\s+#([A-Z0-9]{4,8})|\s+(\d{1,2}))?$/i))){
         const cmd=m[1].toLowerCase();
         let tk=null;
@@ -355,7 +370,7 @@ app.post("/webhook", async (req,res)=>{
         if(!tk || !tickets.has(tk)) return enviarTexto(from,"No encuentro el ticket.");
         const info=tickets.get(tk);
 
-        if(cmd==="end"){
+        if(cmd==="end"){ // mensaje de cierre al cliente
           await enviarTexto(info.num, MSG_CIERRE_MANUAL);
         }
 
@@ -365,7 +380,7 @@ app.post("/webhook", async (req,res)=>{
         return enviarTexto(from, cmd==="end" ? `✅ Cerrado y bot reactivado para #${tk}.` : `🤖 Bot reactivado para #${tk}.`);
       }
 
-      // "N?"
+      // "N?" → detalle del slot con TODAS las pendientes
       if((m=t.match(/^(\d{1,2})\?$/))){
         const s=parseInt(m[1],10); const tk=slots.get(s);
         if(!tk) return enviarTexto(from,"Slot vacío.");
@@ -440,7 +455,7 @@ Cerrar o volver bot:
     const ticketId = ensureTicket(from, name, msg.id||from);
     const tInfo = tickets.get(ticketId);
 
-    // En handoff
+    // En handoff: bot en silencio; acumula pendientes y notifica
     if(tInfo?.handoff){
       const s = slotByTicket.get(ticketId) || assignSlot(ticketId);
       tInfo.lastClientAt = Date.now();
@@ -456,7 +471,11 @@ Cerrar o volver bot:
     const intent = detectarIntent(texto);
     const enHorario = esHorarioLaboral();
 
-    if(intent==="inicio") return enviarTexto(from, menuPrincipal(enHorario));
+    if(intent==="inicio"){
+      // Si el usuario escribió exactamente "0" (o "cero"), mostrar solo opciones (sin saludo).
+      const soloOpciones = /^\s*(0|cero)\s*$/i.test(texto);
+      return enviarTexto(from, soloOpciones ? menuSoloOpciones(enHorario) : menuPrincipal(enHorario));
+    }
     if(intent==="op1")   return enviarTexto(from, MSG_PRECIOS_KHUMIC);
     if(intent==="op2")   return enviarTexto(from, MSG_PRECIOS_SEAWEED);
     if(intent==="op3")   return enviarTexto(from, MSG_BENEFICIOS_KHUMIC);
@@ -467,7 +486,6 @@ Cerrar o volver bot:
     if(intent==="menu_fichas"){
       await enviarDocumentoPorId(from,{ mediaId:KHUMIC_PDF_ID, filename:"Khumic-100-ficha.pdf", caption:"📄 Ficha Khumic-100." });
       await enviarDocumentoPorId(from,{ mediaId:SEAWEED_PDF_ID, filename:"Seaweed-800-ficha.pdf", caption:"📄 Ficha Seaweed 800." });
-      // Opcional: un breve texto con footer tras enviar los PDFs
       await enviarTexto(from, withFooter("✅ Se enviaron ambas fichas técnicas."));
       return;
     }
