@@ -177,7 +177,7 @@ const MSG_PRECIOS_SEAWEED = withFooter(
 );
 
 const GUIA_USO =
-`\n\n🧪 *Guía rápida de uso (referencia general)*\n• *Dosis general:* 3–4 kg/ha/mes.\n• *Recomendación:* dividir en *2 aplicaciones* cada *15 días*.\n• *Tanque 200 L:* *500 gr* cada *15 días*.\n• *Por volumen de agua:* *2,5–3,5 g/L*.\n• *Vías:* edáfico/fertirriego y foliar.\n • 🚫 Evita aplicar por vía foliar en cultivos delicados (como rosas 🌹).Podrían generar manchas superficiales. \n • Ajustar según cultivo/etapa; *prueba de compatibilidad* antes de mezclar.`;
+`\n\n🧪 *Guía rápida de uso (referencia general)*\n• *Dosis general:* 3–4 kg/ha/mes.\n• *Recomendación:* dividir en *2 aplicaciones* cada *15 días*.\n• *Tanque 200 L:* *500 gr* cada *15 días*.\n• *Por volumen de agua:* *2,5–3,5 g/L*.\n• *Vías:* edáfico/fertirriego y foliar.\n • 🚫 Evita aplicar por vía foliar en cultivos delicados (como rosas 🌹) ya que podrían generar manchas superficiales. \n • Ajustar según cultivo/etapa; *prueba de compatibilidad* antes de mezclar.`;
 
 const MSG_BENEFICIOS_KHUMIC = withFooter(
 `🌿 *Beneficios de Khumic-100* (ácidos húmicos + fúlvicos)
