@@ -114,11 +114,11 @@ async function notificarAdmin({ name="Cliente", num, ticket, slot, texto="Nuevo 
 }
 
 /* ===== Tickets / Handoff / Slots ===== */
-const tickets = new Map();          // ticketId -> { num, name, handoff, slot, lastClientAt, lastAdminAt, unread, lastReminderAt, pending: [{t,ts}] }
+const tickets = new Map();
 const byNumber = new Map();
 const recent = [];
-const slots = new Map();            // slot -> ticketId
-const slotByTicket = new Map();     // ticketId -> slot
+const slots = new Map();
+const slotByTicket = new Map();
 const MAX_SLOTS = 20;
 const adminCtx = { activeTicket: null };
 
@@ -154,7 +154,10 @@ function freeSlot(ticketId){
 }
 
 /* ===== Contenidos ===== */
-function withFooter(txt){ return txt + "\n\n➡️ *Para continuar*, responde con el número:\n• 7️⃣ Hablar con un asesor\n• 0️⃣ Volver al inicio"; }
+// (Actualizado footer: ahora 8 = asesor)
+function withFooter(txt){
+  return txt + "\n\n➡️ *Para continuar*, responde con el número:\n• 8️⃣ Hablar con un asesor\n• 0️⃣ Volver al inicio";
+}
 
 const MSG_PRECIOS_KHUMIC = withFooter(
 `💰 *Precios y promociones de Khumic-100*
@@ -211,6 +214,7 @@ const MSG_ENVIOS = withFooter(
 • Operador: *Cita Express* + *QR/URL de rastreo* (transparencia total).`
 );
 
+// (Este texto ya no se usa al presionar 6, pero lo dejamos por si alguien escribe "fichas")
 const MSG_FICHAS = withFooter("📑 *Fichas técnicas disponibles*\nEscribe:\n\n• *ficha 100* → Khumic-100\n• *ficha seaweed* → Seaweed 800");
 
 const MSG_LINKS = withFooter(
@@ -221,8 +225,8 @@ const MSG_LINKS = withFooter(
 );
 
 // Mensajes de cierre
-const MSG_CIERRE_AUTO   = "⏳ Cerramos este chat por *falta de respuesta*. Si deseas retomar tu pedido, responde *7* para contactar a un asesor. ¡Gracias por preferirnos! 🌱";
-const MSG_CIERRE_MANUAL = " *Gracias por preferirnos*. Si necesitas más ayuda, responde *7* para contactar de nuevo a un asesor. ¡Estamos para ayudarte!";
+const MSG_CIERRE_AUTO   = "⏳ Cerramos este chat por *falta de respuesta*. Si deseas retomar tu pedido, responde *8* para contactar a un asesor. ¡Gracias por preferirnos! 🌱";
+const MSG_CIERRE_MANUAL = " *Gracias por preferirnos*. Si necesitas más ayuda, responde *8* para contactar de nuevo a un asesor. ¡Estamos para ayudarte!*";
 
 /* ===== Menú / Intents ===== */
 function menuPrincipal(enHorario){
@@ -237,8 +241,8 @@ function menuPrincipal(enHorario){
     "4️⃣ Beneficios de *Khumic – Seaweed 800* (algas marinas)\n" +
     "5️⃣ Envíos y cómo encontrarnos\n" +
     "6️⃣ *Fichas técnicas (PDF)*\n" +
-    "7️⃣ Hablar con un asesor \n" +
-    "8️⃣ Sitio web y redes sociales \n" +
+    "7️⃣ Sitio web y redes sociales \n" +     // <— cambiado
+    "8️⃣ Hablar con un asesor \n" +            // <— cambiado
     "0️⃣ Volver al inicio";
 }
 function detectarNumeroEnFrase(t){
@@ -249,12 +253,25 @@ function detectarNumeroEnFrase(t){
 }
 function detectarIntent(texto){
   const t = normalizar(texto);
-  if (/^7$/.test(t) || /asesor|agente|humano|contactar|comprar|necesito comprar/i.test(t)) return "asesor";
+  // 8 => asesor (cambio)
+  if (/^8$/.test(t) || /asesor|agente|humano|contactar|comprar|necesito comprar/i.test(t)) return "asesor";
+  // 6 => fichas (pero ahora envía directo ambos PDFs)
   if (/^6$/.test(t) || /^fichas?$/i.test(t)) return "menu_fichas";
+  // accesos directos por texto
   if (/\bficha\b/.test(t) && /\b(100|khumic|humic)\b/.test(t)) return "ficha_khumic";
   if (/\bficha\b/.test(t) && /\b(seaweed|800|algas)\b/.test(t)) return "ficha_seaweed";
-  if (/^8$/.test(t) || /web|sitio|redes|facebook|tiktok/i.test(t)) return "links";
-  const num = detectarNumeroEnFrase(t); if(num!==null) return ({0:"inicio",1:"op1",2:"op2",3:"op3",4:"op4",5:"op5",6:"menu_fichas",7:"asesor",8:"links"})[num];
+  // 7 => links (cambio)
+  if (/^7$/.test(t) || /web|sitio|redes|facebook|tiktok/i.test(t)) return "links";
+  // números genéricos (map actualizado)
+  const num = detectarNumeroEnFrase(t);
+  if(num!==null){
+    return ({
+      0:"inicio",1:"op1",2:"op2",3:"op3",4:"op4",5:"op5",
+      6:"menu_fichas",
+      7:"links",     // <— cambiado
+      8:"asesor"     // <— cambiado
+    })[num];
+  }
   if (/^(hola|buen[oa]s?|menu|men[uú]|inicio|start|0)$/i.test(t)) return "inicio";
   if (/gracias|muchas gracias|mil gracias|thank/i.test(t)) return "gracias";
   return "fallback";
@@ -286,7 +303,7 @@ app.post("/webhook", async (req,res)=>{
       const t=texto.trim();
       let m;
 
-      // CHATS: lista de slots + todas las pendientes por slot (hasta CHATS_PENDING_MAX)
+      // CHATS
       if(/^chats?$/i.test(t)){
         const items=[...slots.keys()].sort((a,b)=>a-b).map(s=>{
           const tk=slots.get(s); const info=tickets.get(tk);
@@ -294,7 +311,7 @@ app.post("/webhook", async (req,res)=>{
           let lines = "";
           if(count){
             const max = Number(CHATS_PENDING_MAX);
-            const arr = info.pending.slice(-max); // últimas N sin responder
+            const arr = info.pending.slice(-max);
             lines = "\n" + arr.map((p,i)=>`   ${i+1}) (${minutesAgo(p.ts)} min) “${preview(p.t, 160)}”`).join("\n");
             if(info.pending.length > max) lines += `\n   …(${info.pending.length - max} más)`;
           }
@@ -327,7 +344,7 @@ app.post("/webhook", async (req,res)=>{
       }
       if(/^stop$/i.test(t)){ adminCtx.activeTicket=null; return enviarTexto(from,"✋ Chat desactivado."); }
 
-      // bot / end  (quitar handoff; end además agradece y libera slot)
+      // bot / end
       if((m=t.match(/^(bot|end)(?:\s+#([A-Z0-9]{4,8})|\s+(\d{1,2}))?$/i))){
         const cmd=m[1].toLowerCase();
         let tk=null;
@@ -338,7 +355,7 @@ app.post("/webhook", async (req,res)=>{
         if(!tk || !tickets.has(tk)) return enviarTexto(from,"No encuentro el ticket.");
         const info=tickets.get(tk);
 
-        if(cmd==="end"){ // mensaje de cierre al cliente
+        if(cmd==="end"){
           await enviarTexto(info.num, MSG_CIERRE_MANUAL);
         }
 
@@ -348,7 +365,7 @@ app.post("/webhook", async (req,res)=>{
         return enviarTexto(from, cmd==="end" ? `✅ Cerrado y bot reactivado para #${tk}.` : `🤖 Bot reactivado para #${tk}.`);
       }
 
-      // "N?" → detalle del slot con TODAS las pendientes
+      // "N?"
       if((m=t.match(/^(\d{1,2})\?$/))){
         const s=parseInt(m[1],10); const tk=slots.get(s);
         if(!tk) return enviarTexto(from,"Slot vacío.");
@@ -423,13 +440,12 @@ Cerrar o volver bot:
     const ticketId = ensureTicket(from, name, msg.id||from);
     const tInfo = tickets.get(ticketId);
 
-    // En handoff: bot en silencio; acumula pendientes y notifica
+    // En handoff
     if(tInfo?.handoff){
       const s = slotByTicket.get(ticketId) || assignSlot(ticketId);
       tInfo.lastClientAt = Date.now();
       tInfo.unread = (tInfo.unread||0) + 1;
       tInfo.pending.push({ t: texto, ts: Date.now() });
-      // Construimos resumen multi-línea para el admin (limitado)
       const arr = tInfo.pending.slice(-Number(REMIND_PENDING_MAX));
       const listado = arr.map((p,i)=>`${arr.length>1?`${i+1}) `:""}“${preview(p.t, 120)}”`).join("\n");
       await notificarAdmin({ name, num: from, ticket: ticketId, slot: `S${s}`, texto: listado || texto });
@@ -446,8 +462,18 @@ Cerrar o volver bot:
     if(intent==="op3")   return enviarTexto(from, MSG_BENEFICIOS_KHUMIC);
     if(intent==="op4")   return enviarTexto(from, MSG_BENEFICIOS_SEAWEED);
     if(intent==="op5")   return enviarTexto(from, MSG_ENVIOS);
-    if(intent==="menu_fichas") return enviarTexto(from, MSG_FICHAS);
+
+    // 6 => enviar ambas fichas directamente (cambio principal)
+    if(intent==="menu_fichas"){
+      await enviarDocumentoPorId(from,{ mediaId:KHUMIC_PDF_ID, filename:"Khumic-100-ficha.pdf", caption:"📄 Ficha Khumic-100." });
+      await enviarDocumentoPorId(from,{ mediaId:SEAWEED_PDF_ID, filename:"Seaweed-800-ficha.pdf", caption:"📄 Ficha Seaweed 800." });
+      // Opcional: un breve texto con footer tras enviar los PDFs
+      await enviarTexto(from, withFooter("✅ Se enviaron ambas fichas técnicas."));
+      return;
+    }
+
     if(intent==="links") return enviarTexto(from, MSG_LINKS);
+
     if(intent==="ficha_khumic")
       return enviarDocumentoPorId(from,{ mediaId:KHUMIC_PDF_ID, filename:"Khumic-100-ficha.pdf", caption:"📄 Ficha Khumic-100." });
     if(intent==="ficha_seaweed")
@@ -456,7 +482,6 @@ Cerrar o volver bot:
     if(intent==="asesor"){
       tInfo.handoff = true;
       const slot = assignSlot(ticketId);
-      // inicia pendientes con este primer mensaje
       tInfo.lastClientAt = Date.now();
       tInfo.unread = 1;
       tInfo.pending = [{ t: texto, ts: Date.now() }];
@@ -492,7 +517,6 @@ setInterval(async ()=>{
       const mins = Math.floor((now - info.lastClientAt)/60000);
       if(mins >= Number(REMIND_AFTER_MIN) && now - (info.lastReminderAt||0) >= Number(REMIND_AFTER_MIN)*60000){
         const s = slotByTicket.get(tk) || assignSlot(tk);
-        // incluir varias pendientes (limitadas)
         const arr = info.pending.slice(-Number(REMIND_PENDING_MAX));
         const listado = arr.map((p,i)=>`${arr.length>1?`${i+1}) `:""}“${preview(p.t, 120)}” (${minutesAgo(p.ts)} min)`).join("\n");
         await notificarAdmin({
