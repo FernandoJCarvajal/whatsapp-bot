@@ -154,9 +154,13 @@ function freeSlot(ticketId){
 }
 
 /* ===== Contenidos ===== */
-// Footer con 8 = asesor (cambio)
+// Footer general con 8 = asesor
 function withFooter(txt){
   return txt + "\n\n➡️ *Para continuar*, responde con el número:\n• 8️⃣ Hablar con un asesor\n• 0️⃣ Volver al inicio";
+}
+// Footer mínimo para flujos “solo opciones”
+function footerBasico(){
+  return "➡️ *Para continuar*, responde con el número:\n• 8️⃣ Hablar con un asesor\n• 0️⃣ Volver al inicio";
 }
 
 const MSG_PRECIOS_KHUMIC = withFooter(
@@ -214,7 +218,7 @@ const MSG_ENVIOS = withFooter(
 • Operador: *Cita Express* + *QR/URL de rastreo* (transparencia total).`
 );
 
-// Texto informativo si alguien escribe "fichas" (aunque con 6 ya se envían directo)
+// Texto de apoyo si alguien escribe "fichas" (aunque el 6 manda directo)
 const MSG_FICHAS = withFooter("📑 *Fichas técnicas disponibles*\nEscribe:\n\n• *ficha 100* → Khumic-100\n• *ficha seaweed* → Seaweed 800");
 
 const MSG_LINKS = withFooter(
@@ -259,36 +263,86 @@ function menuSoloOpciones(enHorario){
     "0️⃣ Volver al inicio";
 }
 
-/* ===== Intents ===== */
+/* ===== Intents (números + palabras/fras es clave) ===== */
 function detectarNumeroEnFrase(t){
   const m = t.match(/(?:^|\D)([0-8])(?:\D|$)/); if(m) return m[1];
   const map={cero:"0",uno:"1",dos:"2",tres:"3",cuatro:"4",cinco:"5",seis:"6",siete:"7",ocho:"8"};
   for(const [w,n] of Object.entries(map)){ if(new RegExp(`\\b${w}\\b`).test(t)) return n; }
   return null;
 }
+// Coincidencia por inclusión (normaliza ambos lados)
+const any = (t, arr) => arr.some(w => t.includes(normalizar(w)));
+
 function detectarIntent(texto){
   const t = normalizar(texto);
-  // 8 => asesor (cambio)
-  if (/^8$/.test(t) || /asesor|agente|humano|contactar|comprar|necesito comprar/i.test(t)) return "asesor";
-  // 6 => fichas (envía directo ambos PDFs)
-  if (/^6$/.test(t) || /^fichas?$/i.test(t)) return "menu_fichas";
-  // accesos directos por texto
-  if (/\bficha\b/.test(t) && /\b(100|khumic|humic)\b/.test(t)) return "ficha_khumic";
-  if (/\bficha\b/.test(t) && /\b(seaweed|800|algas)\b/.test(t)) return "ficha_seaweed";
-  // 7 => links (cambio)
-  if (/^7$/.test(t) || /web|sitio|redes|facebook|tiktok/i.test(t)) return "links";
-  // números genéricos (map actualizado)
+
+  // 8 => asesor / contacto humano
+  if (/^8$/.test(t) || any(t, [
+    "asesor","agente","humano","contactar","comprar","necesito comprar","vendedor","cotizar",
+    "hablar con asesor","hablar con alguien","llamar","soporte","atencion","asesoria","asesoría"
+  ])) return "asesor";
+
+  // 6 => fichas técnicas (envía directo ambos PDFs)
+  if (/^6$/.test(t) || any(t, [
+    "fichas","ficha tecnica","fichas tecnicas","pdf","documento tecnico","hoja tecnica","datasheet","fichas pdf","informacion tecnica"
+  ])) return "menu_fichas";
+
+  // accesos directos a fichas por texto
+  if (t.includes("ficha") && (t.includes("100") || t.includes("khumic") || t.includes("humic"))) return "ficha_khumic";
+  if (t.includes("ficha") && (t.includes("seaweed") || t.includes("800") || t.includes("algas"))) return "ficha_seaweed";
+
+  // 7 => links / sitio / redes
+  if (/^7$/.test(t) || any(t, [
+    "web","sitio","pagina","pagina web","sitio web","redes","facebook","tiktok","instagram","link","links"
+  ])) return "links";
+
+  // 1 => Precios/procmos Khumic-100 (sinónimos regionales)
+  if (/^1$/.test(t) || any(t, [
+    "precio","precios","promo","promocion","promoción","oferta","ofertas","cuanto cuesta","cuanto es","cuanto sale",
+    "cuanto vale","en cuanto esta","a cuanto esta","a cuanto","tarifa","lista de precios","valores","coste",
+    "khumic","khumic 100","humic","humico","fulvico","fulvico"
+  ])) return "op1";
+
+  // 2 => Precios Seaweed 800 (sinónimos regionales)
+  if (/^2$/.test(t) || any(t, [
+    "seaweed","seaweed 800","algas","algas marinas","precio seaweed","promo seaweed","oferta seaweed",
+    "cuanto cuesta seaweed","cuanto vale seaweed","en cuanto esta seaweed","a cuanto esta seaweed"
+  ])) return "op2";
+
+  // 3 => Beneficios Khumic-100
+  if (/^3$/.test(t) || any(t, [
+    "beneficios","para que sirve","para que sirve khumic","ventajas","efectos","funcion","por que usar khumic",
+    "humic beneficios","khumic beneficios"
+  ])) return "op3";
+
+  // 4 => Beneficios Seaweed 800
+  if (/^4$/.test(t) || any(t, [
+    "beneficios seaweed","seaweed beneficios","para que sirve seaweed","algas beneficios","algas marinas beneficios"
+  ])) return "op4";
+
+  // 5 => Envíos / ubicación (sinónimos regionales)
+  if (/^5$/.test(t) || any(t, [
+    "envio","envio","envios","envios","enviar","flete","a domicilio","a domici lio","llega a","entregan",
+    "retiro","recoger","direccion","ubicacion","donde estan","como los encuentro","demora","cuanto demora",
+    "tiempo de entrega","rastrear","rastreo","tracking","courier","cita express","enviar a domicilio","entrega"
+  ])) return "op5";
+
+  // Inicio / menú / saludo
+  if (/^(hola|bueno?s?|menu|menu|inicio|start|empezar)$/i.test(t)) return "inicio";
+
+  // 0 => volver (handler decide saludo/no-saludo)
+  if (/^0$/.test(t) || /\bcero\b/.test(t)) return "inicio";
+
+  if (/gracias|muchas gracias|mil gracias|thank/i.test(t)) return "gracias";
+
+  // fallback: map por número suelto
   const num = detectarNumeroEnFrase(t);
   if(num!==null){
     return ({
       0:"inicio",1:"op1",2:"op2",3:"op3",4:"op4",5:"op5",
-      6:"menu_fichas",
-      7:"links",     // cambiado
-      8:"asesor"     // cambiado
+      6:"menu_fichas",7:"links",8:"asesor"
     })[num];
   }
-  if (/^(hola|buen[oa]s?|menu|men[uú]|inicio|start)$/i.test(t)) return "inicio";
-  if (/gracias|muchas gracias|mil gracias|thank/i.test(t)) return "gracias";
   return "fallback";
 }
 
@@ -380,7 +434,7 @@ app.post("/webhook", async (req,res)=>{
         return enviarTexto(from, cmd==="end" ? `✅ Cerrado y bot reactivado para #${tk}.` : `🤖 Bot reactivado para #${tk}.`);
       }
 
-      // "N?" → detalle del slot con TODAS las pendientes
+      // "N?" → detalle del slot
       if((m=t.match(/^(\d{1,2})\?$/))){
         const s=parseInt(m[1],10); const tk=slots.get(s);
         if(!tk) return enviarTexto(from,"Slot vacío.");
@@ -472,7 +526,7 @@ Cerrar o volver bot:
     const enHorario = esHorarioLaboral();
 
     if(intent==="inicio"){
-      // Si el usuario escribió exactamente "0" (o "cero"), mostrar solo opciones (sin saludo).
+      // Si escribió exactamente "0"/"cero": menú sin saludo
       const soloOpciones = /^\s*(0|cero)\s*$/i.test(texto);
       return enviarTexto(from, soloOpciones ? menuSoloOpciones(enHorario) : menuPrincipal(enHorario));
     }
@@ -482,11 +536,11 @@ Cerrar o volver bot:
     if(intent==="op4")   return enviarTexto(from, MSG_BENEFICIOS_SEAWEED);
     if(intent==="op5")   return enviarTexto(from, MSG_ENVIOS);
 
-    // 6 => enviar ambas fichas directamente (cambio principal)
+    // 6 => enviar ambas fichas directamente (PDFs) + footer mínimo (sin “Se enviaron…”)
     if(intent==="menu_fichas"){
       await enviarDocumentoPorId(from,{ mediaId:KHUMIC_PDF_ID, filename:"Khumic-100-ficha.pdf", caption:"📄 Ficha Khumic-100." });
       await enviarDocumentoPorId(from,{ mediaId:SEAWEED_PDF_ID, filename:"Seaweed-800-ficha.pdf", caption:"📄 Ficha Seaweed 800." });
-      await enviarTexto(from, withFooter("✅ Se enviaron ambas fichas técnicas."));
+      await enviarTexto(from, footerBasico());
       return;
     }
 
