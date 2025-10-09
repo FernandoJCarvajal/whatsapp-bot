@@ -154,11 +154,9 @@ function freeSlot(ticketId){
 }
 
 /* ===== Contenidos ===== */
-// Footer general con 8 = asesor
 function withFooter(txt){
   return txt + "\n\n➡️ *Para continuar*, responde con el número:\n• 8️⃣ Hablar con un asesor\n• 0️⃣ Volver al inicio";
 }
-// Footer mínimo para flujos “solo opciones”
 function footerBasico(){
   return "➡️ *Para continuar*, responde con el número:\n• 8️⃣ Hablar con un asesor\n• 0️⃣ Volver al inicio";
 }
@@ -218,7 +216,6 @@ const MSG_ENVIOS = withFooter(
 • Operador: *Cita Express* + *QR/URL de rastreo* (transparencia total).`
 );
 
-// Texto de apoyo si alguien escribe "fichas" (aunque el 6 manda directo)
 const MSG_FICHAS = withFooter("📑 *Fichas técnicas disponibles*\nEscribe:\n\n• *ficha 100* → Khumic-100\n• *ficha seaweed* → Seaweed 800");
 
 const MSG_LINKS = withFooter(
@@ -232,7 +229,7 @@ const MSG_LINKS = withFooter(
 const MSG_CIERRE_AUTO   = "⏳ Cerramos este chat por *falta de respuesta*. Si deseas retomar tu pedido, responde *8* para contactar a un asesor. ¡Gracias por preferirnos! 🌱";
 const MSG_CIERRE_MANUAL = " *Gracias por preferirnos*. Si necesitas más ayuda, responde *8* para contactar de nuevo a un asesor. ¡Estamos para ayudarte!";
 
-/* ===== Menús (con y sin saludo) ===== */
+/* ===== Menús ===== */
 function menuPrincipal(enHorario){
   const saludo =
     `🌱 *¡Hola! Soy ${DISPLAY_BOT_NAME}* 🤖 *estoy aquí para ayudarte* 🤝🧑‍🌾.\n` +
@@ -263,79 +260,85 @@ function menuSoloOpciones(enHorario){
     "0️⃣ Volver al inicio";
 }
 
-/* ===== Intents (números + palabras/fras es clave) ===== */
+/* ===== Intents (números + palabras clave) ===== */
 function detectarNumeroEnFrase(t){
   const m = t.match(/(?:^|\D)([0-8])(?:\D|$)/); if(m) return m[1];
   const map={cero:"0",uno:"1",dos:"2",tres:"3",cuatro:"4",cinco:"5",seis:"6",siete:"7",ocho:"8"};
   for(const [w,n] of Object.entries(map)){ if(new RegExp(`\\b${w}\\b`).test(t)) return n; }
   return null;
 }
-// Coincidencia por inclusión (normaliza ambos lados)
-const any = (t, arr) => arr.some(w => t.includes(normalizar(w)));
+const anyIncl = (t, arr) => arr.some(w => t.includes(normalizar(w)));
 
 function detectarIntent(texto){
   const t = normalizar(texto);
 
-  // 8 => asesor / contacto humano
-  if (/^8$/.test(t) || any(t, [
+  /* ----- A. Asesor / contacto (8) ----- */
+  if (/^8$/.test(t) || anyIncl(t, [
     "asesor","agente","humano","contactar","comprar","necesito comprar","vendedor","cotizar",
     "hablar con asesor","hablar con alguien","llamar","soporte","atencion","asesoria","asesoría"
   ])) return "asesor";
 
-  // 6 => fichas técnicas (envía directo ambos PDFs)
-  if (/^6$/.test(t) || any(t, [
+  /* ----- B. Fichas técnicas (6) ----- */
+  if (/^6$/.test(t) || anyIncl(t, [
     "fichas","ficha tecnica","fichas tecnicas","pdf","documento tecnico","hoja tecnica","datasheet","fichas pdf","informacion tecnica"
   ])) return "menu_fichas";
-
-  // accesos directos a fichas por texto
   if (t.includes("ficha") && (t.includes("100") || t.includes("khumic") || t.includes("humic"))) return "ficha_khumic";
   if (t.includes("ficha") && (t.includes("seaweed") || t.includes("800") || t.includes("algas"))) return "ficha_seaweed";
 
-  // 7 => links / sitio / redes
-  if (/^7$/.test(t) || any(t, [
-    "web","sitio","pagina","pagina web","sitio web","redes","facebook","tiktok","instagram","link","links"
-  ])) return "links";
+  /* ----- C. PRECIOS (lógica específica) ----- */
+  // 1) Seaweed si menciona algas/seaweed/800
+  if (anyIncl(t, ["precio algas","precio seaweed","seaweed","algas","800"])) return "op2";
+  // 2) Khumic si menciona humico/ácidos/100/khumic
+  if (anyIncl(t, ["precio humic","precio humico","precio humicos","precio acido","precio acidos","precio ácidos",
+                  "humic","humico","ácidos","acidos","khumic","khumic 100","100"])) return "op1";
+  // 3) Si dice solo "precio"/"precios" sin otros términos → ambos
+  if (/^\s*(precio|precios)\s*$/i.test(t)) return "precios_ambos";
 
-  // 1 => Precios/procmos Khumic-100 (sinónimos regionales)
-  if (/^1$/.test(t) || any(t, [
+  // 4) Detección genérica (mantiene sinónimos regionales)
+  if (/^1$/.test(t) || anyIncl(t, [
     "precio","precios","promo","promocion","promoción","oferta","ofertas","cuanto cuesta","cuanto es","cuanto sale",
     "cuanto vale","en cuanto esta","a cuanto esta","a cuanto","tarifa","lista de precios","valores","coste",
-    "khumic","khumic 100","humic","humico","fulvico","fulvico"
+    "khumic","khumic 100","humic","humico","fulvico","fúlvico","acidos","ácidos"
   ])) return "op1";
-
-  // 2 => Precios Seaweed 800 (sinónimos regionales)
-  if (/^2$/.test(t) || any(t, [
+  if (/^2$/.test(t) || anyIncl(t, [
     "seaweed","seaweed 800","algas","algas marinas","precio seaweed","promo seaweed","oferta seaweed",
-    "cuanto cuesta seaweed","cuanto vale seaweed","en cuanto esta seaweed","a cuanto esta seaweed"
+    "cuanto cuesta seaweed","cuanto vale seaweed","en cuanto esta seaweed","a cuanto esta seaweed","800"
   ])) return "op2";
 
-  // 3 => Beneficios Khumic-100
-  if (/^3$/.test(t) || any(t, [
-    "beneficios","para que sirve","para que sirve khumic","ventajas","efectos","funcion","por que usar khumic",
-    "humic beneficios","khumic beneficios"
-  ])) return "op3";
+  /* ----- D. BENEFICIOS (lógica específica) ----- */
+  // Seaweed si menciona algas/seaweed/800 junto a "beneficio/para qué sirve"
+  if (anyIncl(t, ["beneficio seaweed","beneficios seaweed","beneficios algas","para que sirve seaweed","para que sirve algas","800 beneficios"])) return "op4";
+  // Khumic si menciona humic/100/ácidos junto a beneficios
+  if (anyIncl(t, ["beneficios humic","beneficios humico","beneficios acidos","beneficios ácidos","beneficios khumic","beneficios 100",
+                  "para que sirve khumic","para que sirve humic","para que sirve acidos"])) return "op3";
+  // Si dice solo "beneficio(s)" sin especificar → ambos
+  if (/^\s*beneficio?s?\s*$/.test(t) || /^\s*para que sirve\s*$/.test(t) || /^\s*para qué sirve\s*$/.test(t)) return "beneficios_ambos";
 
-  // 4 => Beneficios Seaweed 800
-  if (/^4$/.test(t) || any(t, [
+  // Genéricos
+  if (/^3$/.test(t) || anyIncl(t, [
+    "beneficios","para que sirve","ventajas","efectos","funcion","por que usar khumic","khumic beneficios","humic beneficios"
+  ])) return "op3";
+  if (/^4$/.test(t) || anyIncl(t, [
     "beneficios seaweed","seaweed beneficios","para que sirve seaweed","algas beneficios","algas marinas beneficios"
   ])) return "op4";
 
-  // 5 => Envíos / ubicación (sinónimos regionales)
-  if (/^5$/.test(t) || any(t, [
-    "envio","envio","envios","envios","enviar","flete","a domicilio","a domici lio","llega a","entregan",
-    "retiro","recoger","direccion","ubicacion","donde estan","como los encuentro","demora","cuanto demora",
-    "tiempo de entrega","rastrear","rastreo","tracking","courier","cita express","enviar a domicilio","entrega"
+  /* ----- E. Envíos / ubicación (5) ----- */
+  if (/^5$/.test(t) || anyIncl(t, [
+    "envio","envíos","enviar","flete","a domicilio","llega a","entregan","retiro","recoger","direccion","ubicacion","donde estan",
+    "como los encuentro","demora","cuanto demora","tiempo de entrega","rastrear","rastreo","tracking","courier","cita express","entrega"
   ])) return "op5";
 
-  // Inicio / menú / saludo
-  if (/^(hola|bueno?s?|menu|menu|inicio|start|empezar)$/i.test(t)) return "inicio";
+  /* ----- F. Links / redes (7) ----- */
+  if (/^7$/.test(t) || anyIncl(t, ["web","sitio","pagina","pagina web","sitio web","redes","facebook","tiktok","instagram","link","links"])) return "links";
 
-  // 0 => volver (handler decide saludo/no-saludo)
+  /* ----- G. Inicio / menú (0 o saludo) ----- */
+  if (/^(hola|buenos|buenas|menu|menú|inicio|start|empezar)$/i.test(t)) return "inicio";
   if (/^0$/.test(t) || /\bcero\b/.test(t)) return "inicio";
 
+  /* ----- H. Gracias ----- */
   if (/gracias|muchas gracias|mil gracias|thank/i.test(t)) return "gracias";
 
-  // fallback: map por número suelto
+  // Fallback por número suelto
   const num = detectarNumeroEnFrase(t);
   if(num!==null){
     return ({
@@ -372,7 +375,6 @@ app.post("/webhook", async (req,res)=>{
       const t=texto.trim();
       let m;
 
-      // CHATS: lista de slots + pendientes
       if(/^chats?$/i.test(t)){
         const items=[...slots.keys()].sort((a,b)=>a-b).map(s=>{
           const tk=slots.get(s); const info=tickets.get(tk);
@@ -389,7 +391,6 @@ app.post("/webhook", async (req,res)=>{
         return enviarTexto(from, `📒 Chats activos (slots):\n${items}\n\nResponde: *<slot> mensaje*  (ej. "3 Hola")`);
       }
 
-      // use <slot>  / use #ID
       if((m=t.match(/^use\s+(\d{1,2})$/i))){
         const s=parseInt(m[1],10);
         let tk=slots.get(s); if(!tk){ const item=recent[s-1]; if(item) tk=item.ticket; }
@@ -413,28 +414,20 @@ app.post("/webhook", async (req,res)=>{
       }
       if(/^stop$/i.test(t)){ adminCtx.activeTicket=null; return enviarTexto(from,"✋ Chat desactivado."); }
 
-      // bot / end (liberan handoff)
       if((m=t.match(/^(bot|end)(?:\s+#([A-Z0-9]{4,8})|\s+(\d{1,2}))?$/i))){
         const cmd=m[1].toLowerCase();
         let tk=null;
         if(m[2]) tk=m[2].toUpperCase();
         else if(m[3]) tk=slots.get(parseInt(m[3],10));
         else tk=adminCtx.activeTicket;
-
         if(!tk || !tickets.has(tk)) return enviarTexto(from,"No encuentro el ticket.");
         const info=tickets.get(tk);
-
-        if(cmd==="end"){ // mensaje de cierre al cliente
-          await enviarTexto(info.num, MSG_CIERRE_MANUAL);
-        }
-
+        if(cmd==="end"){ await enviarTexto(info.num, MSG_CIERRE_MANUAL); }
         info.handoff=false; info.unread=0; info.lastReminderAt=0; info.pending=[];
         freeSlot(tk);
-
         return enviarTexto(from, cmd==="end" ? `✅ Cerrado y bot reactivado para #${tk}.` : `🤖 Bot reactivado para #${tk}.`);
       }
 
-      // "N?" → detalle del slot
       if((m=t.match(/^(\d{1,2})\?$/))){
         const s=parseInt(m[1],10); const tk=slots.get(s);
         if(!tk) return enviarTexto(from,"Slot vacío.");
@@ -445,7 +438,6 @@ app.post("/webhook", async (req,res)=>{
         return enviarTexto(from, `Slot ${s}: #${tk} — ${inf?.name} [${count}]\n${lines}`);
       }
 
-      // Respuesta rápida: "<slot> mensaje"
       if((m=t.match(/^(\d{1,2})\s+([\s\S]+)/))){
         const s=parseInt(m[1],10); const body=m[2];
         const tk=slots.get(s); if(!tk) return enviarTexto(from,"Slot inválido.");
@@ -455,7 +447,6 @@ app.post("/webhook", async (req,res)=>{
         return enviarTexto(from, `📨 Enviado a [${s}] #${tk}.`);
       }
 
-      // Compatibilidad: r #ID / r <slot> / r msg (activo)
       let mm;
       if((mm=t.match(/^r\s+#([A-Z0-9]{4,8})\s+([\s\S]+)/i))){
         const tk=mm[1].toUpperCase(), body=mm[2]; const inf=tickets.get(tk); const dest=inf?.num;
@@ -476,7 +467,6 @@ app.post("/webhook", async (req,res)=>{
         return enviarTexto(from,`📨 Enviado a #${adminCtx.activeTicket}.`);
       }
 
-      // Ayuda por defecto
       const items=[...slots.keys()].sort((a,b)=>a-b).map(s=>{
         const tk=slots.get(s); const info=tickets.get(tk);
         const count = info?.pending?.length || 0;
@@ -526,17 +516,29 @@ Cerrar o volver bot:
     const enHorario = esHorarioLaboral();
 
     if(intent==="inicio"){
-      // Si escribió exactamente "0"/"cero": menú sin saludo
       const soloOpciones = /^\s*(0|cero)\s*$/i.test(texto);
       return enviarTexto(from, soloOpciones ? menuSoloOpciones(enHorario) : menuPrincipal(enHorario));
     }
+
+    // Precios y beneficios — incluir intents “ambos”
+    if(intent==="precios_ambos"){
+      await enviarTexto(from, MSG_PRECIOS_KHUMIC);
+      await enviarTexto(from, MSG_PRECIOS_SEAWEED);
+      return;
+    }
+    if(intent==="beneficios_ambos"){
+      await enviarTexto(from, MSG_BENEFICIOS_KHUMIC);
+      await enviarTexto(from, MSG_BENEFICIOS_SEAWEED);
+      return;
+    }
+
     if(intent==="op1")   return enviarTexto(from, MSG_PRECIOS_KHUMIC);
     if(intent==="op2")   return enviarTexto(from, MSG_PRECIOS_SEAWEED);
     if(intent==="op3")   return enviarTexto(from, MSG_BENEFICIOS_KHUMIC);
     if(intent==="op4")   return enviarTexto(from, MSG_BENEFICIOS_SEAWEED);
     if(intent==="op5")   return enviarTexto(from, MSG_ENVIOS);
 
-    // 6 => enviar ambas fichas directamente (PDFs) + footer mínimo (sin “Se enviaron…”)
+    // 6 => enviar ambas fichas directamente + footer básico
     if(intent==="menu_fichas"){
       await enviarDocumentoPorId(from,{ mediaId:KHUMIC_PDF_ID, filename:"Khumic-100-ficha.pdf", caption:"📄 Ficha Khumic-100." });
       await enviarDocumentoPorId(from,{ mediaId:SEAWEED_PDF_ID, filename:"Seaweed-800-ficha.pdf", caption:"📄 Ficha Seaweed 800." });
@@ -584,7 +586,6 @@ setInterval(async ()=>{
   for(const [tk, info] of tickets){
     if(!info.handoff) continue;
 
-    // Recordatorio si hay mensajes pendientes del cliente
     if(info.unread && info.lastClientAt){
       const mins = Math.floor((now - info.lastClientAt)/60000);
       if(mins >= Number(REMIND_AFTER_MIN) && now - (info.lastReminderAt||0) >= Number(REMIND_AFTER_MIN)*60000){
@@ -599,7 +600,6 @@ setInterval(async ()=>{
       }
     }
 
-    // Cierre automático si el cliente no responde tras mensaje del admin
     if(info.lastAdminAt && info.lastAdminAt > (info.lastClientAt || 0)){
       const minsFromAdmin = Math.floor((now - info.lastAdminAt)/60000);
       if(minsFromAdmin >= Number(AUTO_CLOSE_MIN)){
@@ -615,3 +615,4 @@ setInterval(async ()=>{
 /* ===== Healthcheck ===== */
 app.get("/", (_req, res) => res.send("OK"));
 app.listen(PORT, () => console.log(`Bot listo en puerto ${PORT}`));
+
